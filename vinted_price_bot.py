@@ -160,6 +160,30 @@ class VintedPriceBot:
             
             logger.info(f"Loaded page: {self.driver.current_url}")
             
+            # Close any modal overlays (domain selector, etc.)
+            try:
+                # Look for close button on modal
+                modal_close_selectors = [
+                    (By.CSS_SELECTOR, "[data-testid*='modal'] button[aria-label='Close']"),
+                    (By.CSS_SELECTOR, ".ReactModal__Overlay button[aria-label='Close']"),
+                    (By.CSS_SELECTOR, "[class*='modal'] button"),
+                    (By.XPATH, "//button[contains(@aria-label, 'Close')]"),
+                ]
+                
+                for by, selector in modal_close_selectors:
+                    try:
+                        close_button = WebDriverWait(self.driver, 2).until(
+                            EC.element_to_be_clickable((by, selector))
+                        )
+                        close_button.click()
+                        logger.info("Closed modal overlay")
+                        time.sleep(1)
+                        break
+                    except:
+                        continue
+            except:
+                logger.info("No modal to close")
+            
             # Accept cookies if present
             try:
                 cookie_button = WebDriverWait(self.driver, 3).until(
@@ -311,32 +335,51 @@ class VintedPriceBot:
                 # Last resort: use JavaScript to set value
                 logger.warning(f"Normal input failed, using JavaScript: {e}")
                 self.driver.execute_script(f"arguments[0].value = '{self.vinted_email}';", email_input)
+                # Trigger input event so form knows the value changed
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", email_input)
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", email_input)
                 logger.info("Email entered via JavaScript")
             
-            time.sleep(1)
+            time.sleep(2)  # Wait for password field to appear
             
-            # Find and fill password input
+            # Find and fill password input (might appear after email is filled)
             logger.info("Looking for password input...")
             password_input = None
             password_selectors = [
+                (By.CSS_SELECTOR, "input[type='password']"),  # Most common first
+                (By.XPATH, "//input[@type='password']"),
                 (By.ID, "password"),
                 (By.NAME, "password"),
                 (By.CSS_SELECTOR, "input[name='login[password]']"),
-                (By.CSS_SELECTOR, "input[type='password']"),
                 (By.CSS_SELECTOR, "input[autocomplete='current-password']"),
-                (By.XPATH, "//form//div[3]//input[@type='password']"),  # Based on your XPath structure
-                (By.XPATH, "//input[@type='password']")
+                (By.XPATH, "//form//div[3]//input[@type='password']"),
             ]
             
             for by, selector in password_selectors:
                 try:
-                    password_input = self.driver.find_element(by, selector)
-                    logger.info(f"Found password input with: {by}={selector}")
+                    logger.info(f"  Trying: {by}={selector}")
+                    password_input = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    logger.info(f"✓ Found password input with: {by}={selector}")
                     break
-                except:
+                except TimeoutException:
+                    continue
+                except Exception as e:
+                    logger.debug(f"  Failed with error: {e}")
                     continue
             
             if not password_input:
+                # Debug: List all password inputs on the page
+                try:
+                    all_password_inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+                    logger.error(f"Could not find password input. Found {len(all_password_inputs)} password fields total")
+                    if len(all_password_inputs) > 0:
+                        for idx, inp in enumerate(all_password_inputs):
+                            is_displayed = inp.is_displayed()
+                            logger.error(f"  Password field {idx+1}: displayed={is_displayed}, name={inp.get_attribute('name')}, id={inp.get_attribute('id')}")
+                except Exception as e:
+                    logger.error(f"Could not list password inputs: {e}")
                 raise Exception("Password input not found")
             
             # Scroll element into view and make sure it's interactable
@@ -358,9 +401,12 @@ class VintedPriceBot:
                 # Last resort: use JavaScript to set value
                 logger.warning(f"Normal input failed, using JavaScript: {e}")
                 self.driver.execute_script(f"arguments[0].value = '{self.vinted_password}';", password_input)
+                # Trigger input event so form knows the value changed
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", password_input)
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", password_input)
                 logger.info("Password entered via JavaScript")
             
-            time.sleep(1)
+            time.sleep(2)
             
             # Submit login form
             submit_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
