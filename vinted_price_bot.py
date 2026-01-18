@@ -195,14 +195,14 @@ class VintedPriceBot:
         try:
             headers = self.sheet.row_values(1)
             if not headers or headers[0] != 'Item ID':
-                self.sheet.update('A1:G1', [[
+                self.sheet.update('A1:H1', [[
                     'Item ID', 'Title', 'Current Price', 'New Price', 
-                    'Price Change %', 'Status', 'Last Updated'
+                    'Price Change %', 'Floor Price', 'Status', 'Last Updated'
                 ]])
         except:
-            self.sheet.update('A1:G1', [[
+            self.sheet.update('A1:H1', [[
                 'Item ID', 'Title', 'Current Price', 'New Price', 
-                'Price Change %', 'Status', 'Last Updated'
+                'Price Change %', 'Floor Price', 'Status', 'Last Updated'
             ]])
         
         # Get existing data
@@ -248,7 +248,7 @@ class VintedPriceBot:
             logger.info("ℹ️  No new or removed items")
         
         # Prepare updated data
-        updated_rows = [['Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Status', 'Last Updated']]
+        updated_rows = [['Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
         
         # Add current items from Vinted (active items)
         for item in items:
@@ -267,17 +267,34 @@ class VintedPriceBot:
                         price_change_percent = self.default_percent
                 else:
                     price_change_percent = self.default_percent
+                
+                # Get floor price if set
+                floor_price_str = str(existing_dict[item_id].get('Floor Price', '')).strip()
+                if floor_price_str and floor_price_str != '':
+                    try:
+                        floor_price = float(floor_price_str)
+                    except:
+                        floor_price = None
+                else:
+                    floor_price = None
             else:
-                # New item, use default percentage
+                # New item, use default percentage, no floor price
                 price_change_percent = self.default_percent
+                floor_price = None
                 logger.info(f"   Using default {self.default_percent}% for new item: {item['title']}")
             
             # Calculate new price
             new_price = round(current_price * (1 + price_change_percent / 100), 2)
             
+            # Apply floor price if set
+            if floor_price is not None and new_price < floor_price:
+                logger.info(f"   Floor price applied for {item['title']}: €{new_price:.2f} → €{floor_price:.2f}")
+                new_price = floor_price
+            
             # Store item data with calculated new price
             item['new_price'] = new_price
             item['price_change_percent'] = price_change_percent
+            item['floor_price'] = floor_price if floor_price is not None else ''
             
             updated_rows.append([
                 item_id,
@@ -285,6 +302,7 @@ class VintedPriceBot:
                 current_price,
                 new_price,
                 price_change_percent,
+                floor_price if floor_price is not None else '',
                 'Active',
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ])
@@ -298,19 +316,20 @@ class VintedPriceBot:
                     old_data.get('Title', 'Unknown'),
                     old_data.get('Current Price', 0),
                     old_data.get('New Price', 0),
-                    old_data.get('Price Change %', 0),
+                    0,  # Set Price Change % to 0 for sold items
+                    old_data.get('Floor Price', ''),
                     '❌ Sold/Removed',
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 ])
         
         # Update entire sheet
         self.sheet.clear()
-        self.sheet.update('A1:G' + str(len(updated_rows)), updated_rows)
+        self.sheet.update('A1:H' + str(len(updated_rows)), updated_rows)
         
         # Format the sheet
         try:
             # Bold header
-            self.sheet.format('A1:G1', {
+            self.sheet.format('A1:H1', {
                 'textFormat': {'bold': True},
                 'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
             })
@@ -320,8 +339,8 @@ class VintedPriceBot:
                 # Find rows with sold/removed status and color them
                 all_values = self.sheet.get_all_values()
                 for idx, row in enumerate(all_values[1:], start=2):  # Skip header
-                    if len(row) > 5 and '❌' in str(row[5]):
-                        self.sheet.format(f'A{idx}:G{idx}', {
+                    if len(row) > 6 and '❌' in str(row[6]):
+                        self.sheet.format(f'A{idx}:H{idx}', {
                             'backgroundColor': {'red': 1.0, 'green': 0.9, 'blue': 0.9},
                             'textFormat': {'strikethrough': True}
                         })
@@ -397,18 +416,27 @@ class VintedPriceBot:
             # Sync with Google Sheets
             items = self.sync_with_google_sheets(items)
             
-            # Update prices
+            # Update prices (TESTING MODE: Only first item)
+            logger.info("⚠️  TESTING MODE: Only updating first item with price change")
             success_count = 0
+            updated_count = 0
+            
             for item in items:
                 if item['new_price'] != item['price']:
-                    if self.update_item_price(item):
-                        success_count += 1
-                    time.sleep(2)  # Be respectful with requests
+                    if updated_count == 0:  # Only update first item
+                        logger.info(f"🧪 Testing price update on first item: {item['title']}")
+                        if self.update_item_price(item):
+                            success_count += 1
+                        updated_count += 1
+                        time.sleep(2)  # Be respectful with requests
+                    else:
+                        logger.info(f"⏭️  Skipping {item['title']} - test mode (would change €{item['price']} → €{item['new_price']})")
                 else:
                     logger.info(f"Skipping {item['title']} - no price change needed")
             
             logger.info("=" * 60)
-            logger.info(f"Bot completed! Updated {success_count}/{len(items)} items")
+            logger.info(f"Bot completed! Updated {success_count}/1 items (test mode)")
+            logger.info(f"⚠️  TEST MODE: {len([i for i in items if i['new_price'] != i['price']]) - updated_count} items skipped")
             logger.info("=" * 60)
             
         except Exception as e:

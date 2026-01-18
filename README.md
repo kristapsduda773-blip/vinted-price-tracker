@@ -7,6 +7,8 @@ Automatically update your Vinted item prices based on percentage changes defined
 - 🔄 Automatically scrapes your Vinted listed items
 - 📊 Syncs item data with Google Sheets
 - 💰 Updates prices based on customizable percentages
+- 🆕 Detects new items automatically (adds them to sheet)
+- 🗑️ Detects sold/removed items (marks them as removed)
 - ⏰ Runs weekly via GitHub Actions
 - 📝 Detailed logging of all operations
 - 🔒 Secure credential management via GitHub Secrets
@@ -17,6 +19,8 @@ Automatically update your Vinted item prices based on percentage changes defined
 2. **Customize**: Edit the "Price Change %" column in the sheet for each item
 3. **Automatic Updates**: Bot runs weekly to:
    - Re-fetch current prices from Vinted
+   - **Detect new items** (automatically adds them with default %)
+   - **Detect removed items** (marks them as "❌ Sold/Removed")
    - Read your custom percentages from Google Sheets
    - Calculate new prices based on percentages
    - Update prices on Vinted automatically
@@ -66,9 +70,13 @@ The bot will automatically create the following columns:
 - **Current Price**: Current price on Vinted
 - **New Price**: Calculated new price
 - **Price Change %**: Percentage to change price (you can edit this!)
+- **Status**: Item status (Active or ❌ Sold/Removed)
 - **Last Updated**: Timestamp of last update
 
 **To customize price changes**: Simply edit the "Price Change %" column for any item. Leave blank for default (10%).
+
+**New items**: Automatically added with default % when detected  
+**Sold items**: Automatically marked as "❌ Sold/Removed" (kept for records)
 
 ### 2. GitHub Repository Setup
 
