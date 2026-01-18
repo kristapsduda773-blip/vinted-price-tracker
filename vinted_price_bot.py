@@ -56,16 +56,45 @@ class VintedPriceBot:
         logger.info("Setting up Chrome WebDriver...")
         
         chrome_options = Options()
-        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--headless=new')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-        logger.info("WebDriver setup complete")
+        try:
+            # Get ChromeDriver path
+            driver_path = ChromeDriverManager().install()
+            
+            # Fix for webdriver-manager bug - ensure we get the actual chromedriver binary
+            import os
+            if os.path.isfile(driver_path):
+                # If it's a file, use it directly
+                actual_driver = driver_path
+            else:
+                # If it's a directory, find the chromedriver binary
+                if os.path.isdir(driver_path):
+                    # Look for chromedriver in the directory
+                    for file in os.listdir(driver_path):
+                        if file == 'chromedriver' or file == 'chromedriver.exe':
+                            actual_driver = os.path.join(driver_path, file)
+                            break
+                    else:
+                        # Fallback: use the path as-is
+                        actual_driver = driver_path
+                else:
+                    actual_driver = driver_path
+            
+            logger.info(f"Using ChromeDriver at: {actual_driver}")
+            service = Service(actual_driver)
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("WebDriver setup complete")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup WebDriver: {e}")
+            raise
         
     def setup_google_sheets(self):
         """Initialize Google Sheets connection"""
