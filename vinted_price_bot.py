@@ -227,39 +227,56 @@ class VintedPriceBot:
             except Exception as e:
                 logger.warning(f"Error clicking login link: {e}")
             
-            # Now look for "Login with Email" button to reveal the email/password form
-            logger.info("Looking for 'Login with Email' button...")
+            # Now look for "Login with Email" button or any button to reveal the email/password form
+            logger.info("Looking for 'Login with Email/Password' option...")
             try:
                 # Look for the email/password login option button
                 email_option_selectors = [
-                    (By.PARTIAL_LINK_TEXT, "e-pasta adresi"),  # "email address" in Latvian
+                    (By.PARTIAL_LINK_TEXT, "e-pasta"),  # "email" in Latvian
                     (By.PARTIAL_LINK_TEXT, "e-pasts"),
-                    (By.XPATH, "//button[contains(., 'e-pasta')]"),
-                    (By.XPATH, "//a[contains(., 'e-pasta')]"),
+                    (By.XPATH, "//button[contains(text(), 'e-pasta')]"),
+                    (By.XPATH, "//a[contains(text(), 'e-pasta')]"),
+                    (By.XPATH, "//button[contains(., 'paroli')]"),  # "password" in Latvian
+                    (By.XPATH, "//a[contains(., 'paroli')]"),
                     (By.CSS_SELECTOR, "button[class*='email']"),
                     (By.CSS_SELECTOR, "a[class*='email']"),
+                    # Try to find any visible link/button on the page
+                    (By.XPATH, "//a[contains(@class, 'Button')]"),
+                    (By.XPATH, "//button[contains(@class, 'Button')]"),
                 ]
                 
                 email_option_button = None
                 for by, selector in email_option_selectors:
                     try:
-                        email_option_button = WebDriverWait(self.driver, 3).until(
-                            EC.element_to_be_clickable((by, selector))
-                        )
-                        logger.info(f"Found email option with: {by}={selector}")
-                        break
+                        elements = self.driver.find_elements(by, selector)
+                        for elem in elements:
+                            if elem.is_displayed():
+                                text = elem.text.lower()
+                                # Check if text contains email/password related keywords
+                                if any(keyword in text for keyword in ['e-pasta', 'e-pasts', 'email', 'paroli', 'password', 'lietotāj']):
+                                    email_option_button = elem
+                                    logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
+                                    break
+                        if email_option_button:
+                            break
                     except:
                         continue
                 
                 if email_option_button:
-                    email_option_button.click()
-                    logger.info("Clicked 'Login with Email' button")
-                    time.sleep(2)
+                    try:
+                        email_option_button.click()
+                        logger.info("Clicked email/password option button")
+                    except:
+                        self.driver.execute_script("arguments[0].click();", email_option_button)
+                        logger.info("Clicked email/password option via JavaScript")
+                    time.sleep(3)
                 else:
-                    logger.info("No email button found, email form might already be visible")
+                    logger.info("No email option button found, form might already be visible")
+                    time.sleep(2)
                     
             except Exception as e:
                 logger.warning(f"Error clicking email option: {e}")
+                time.sleep(2)
             
             # Wait for the login form to be fully visible
             logger.info("Waiting for login form to be interactive...")
@@ -340,9 +357,10 @@ class VintedPriceBot:
                 self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", email_input)
                 logger.info("Email entered via JavaScript")
             
-            time.sleep(2)  # Wait for password field to appear
+            # Password should already be on the same form - no continue button needed
+            time.sleep(1)
             
-            # Find and fill password input (might appear after email is filled)
+            # Find and fill password input (should be on same page as email)
             logger.info("Looking for password input...")
             password_input = None
             password_selectors = [
@@ -370,16 +388,32 @@ class VintedPriceBot:
                     continue
             
             if not password_input:
-                # Debug: List all password inputs on the page
+                # Debug: List ALL inputs on the page to understand what's available
                 try:
+                    all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                    logger.error(f"Could not find password input. Found {len(all_inputs)} total input fields:")
+                    for idx, inp in enumerate(all_inputs[:15]):  # Show first 15
+                        is_displayed = inp.is_displayed()
+                        input_type = inp.get_attribute('type')
+                        input_name = inp.get_attribute('name')
+                        input_id = inp.get_attribute('id')
+                        input_placeholder = inp.get_attribute('placeholder')
+                        logger.error(f"  Input {idx+1}: type={input_type}, displayed={is_displayed}, name={input_name}, id={input_id}, placeholder={input_placeholder}")
+                    
+                    # Also check for password inputs specifically
                     all_password_inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
-                    logger.error(f"Could not find password input. Found {len(all_password_inputs)} password fields total")
-                    if len(all_password_inputs) > 0:
-                        for idx, inp in enumerate(all_password_inputs):
-                            is_displayed = inp.is_displayed()
-                            logger.error(f"  Password field {idx+1}: displayed={is_displayed}, name={inp.get_attribute('name')}, id={inp.get_attribute('id')}")
+                    logger.error(f"Password fields found: {len(all_password_inputs)}")
                 except Exception as e:
-                    logger.error(f"Could not list password inputs: {e}")
+                    logger.error(f"Could not list inputs: {e}")
+                
+                # Save page source
+                try:
+                    with open('/tmp/vinted_no_password.html', 'w', encoding='utf-8') as f:
+                        f.write(self.driver.page_source)
+                    logger.error("Page source saved to /tmp/vinted_no_password.html")
+                except:
+                    pass
+                    
                 raise Exception("Password input not found")
             
             # Scroll element into view and make sure it's interactable
