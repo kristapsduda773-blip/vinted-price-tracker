@@ -46,7 +46,7 @@ class VintedPriceBot:
         self.vinted_profile_url = os.getenv('VINTED_PROFILE_URL')
         self.google_sheet_id = os.getenv('GOOGLE_SHEET_ID')
         self.google_creds_path = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON', './service_account.json')
-        self.default_percent = float(os.getenv('DEFAULT_PRICE_CHANGE_PERCENT', '10'))
+        self.default_percent = float(os.getenv('DEFAULT_PRICE_CHANGE_PERCENT', '-2'))  # Negative to LOWER prices
         
         self.driver = None
         self.sheet = None
@@ -301,78 +301,104 @@ class VintedPriceBot:
             self.driver.get(self.vinted_profile_url)
             time.sleep(5)
             
-            # Scroll down to load all items (lazy loading)
-            logger.info("Scrolling to load all items...")
-            last_height = self.driver.execute_script("return document.body.scrollHeight")
-            scroll_attempts = 0
-            max_scrolls = 10
+            # Scrape items WHILE scrolling (Vinted unloads items as you scroll down)
+            logger.info("Scrolling and collecting items incrementally...")
             
-            while scroll_attempts < max_scrolls:
+            processed_ids = set()  # Track which items we've already scraped
+            scroll_attempts = 0
+            max_scrolls = 20
+            no_new_items_count = 0
+            
+            while scroll_attempts < max_scrolls and no_new_items_count < 3:
+                # Find all currently visible item links
+                item_links = self.driver.find_elements(By.CSS_SELECTOR, "[data-testid*='--overlay-link']")
+                
+                items_found_this_scroll = 0
+                
+                for link in item_links:
+                    try:
+                        # Get item ID from data-testid (format: "product-item-id-7819896031--overlay-link")
+                        testid = link.get_attribute('data-testid')
+                        if testid and 'product-item-id-' in testid:
+                            item_id = testid.replace('product-item-id-', '').split('--')[0]
+                        else:
+                            item_url = link.get_attribute('href')
+                            if not item_url or '/items/' not in item_url:
+                                continue
+                            item_id = item_url.split('/items/')[-1].split('-')[0]
+                        
+                        # Skip if already processed
+                        if item_id in processed_ids:
+                            continue
+                        
+                        # Get item URL
+                        item_url = link.get_attribute('href')
+                        if not item_url or '/items/' not in item_url:
+                            continue
+                        
+                        # Get title from the title attribute
+                        title = link.get_attribute('title')
+                        clean_title = title.split(',')[0] if title else f"Item {item_id}"
+                        
+                        # Get price using the exact data-testid pattern
+                        price = 0.0
+                        try:
+                            # Search for the price element with this item ID (it should be visible)
+                            price_element = self.driver.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
+                            price_text = price_element.text.strip()
+                            # Remove € symbol and parse (e.g., "€13.00" or "13.00")
+                            price_text = price_text.replace('€', '').replace(',', '.').strip()
+                            price = float(price_text)
+                        except Exception as e:
+                            logger.warning(f"Could not find price for item {item_id}: {e}")
+                            price = 0.0
+                        
+                        # Get image URL
+                        image_url = ''
+                        try:
+                            # Find image element within the link's parent container
+                            parent = link.find_element(By.XPATH, '..')
+                            img = parent.find_element(By.CSS_SELECTOR, 'img')
+                            image_url = img.get_attribute('src')
+                            if not image_url:
+                                image_url = img.get_attribute('data-src')  # Lazy-loaded images
+                        except Exception as e:
+                            logger.debug(f"Could not find image for item {item_id}: {e}")
+                        
+                        # Ensure URL is absolute
+                        if not item_url.startswith('http'):
+                            item_url = f"https://www.vinted.lv{item_url}"
+                        
+                        items.append({
+                            'id': item_id,
+                            'title': clean_title,
+                            'price': price,
+                            'url': item_url,
+                            'image_url': image_url
+                        })
+                        
+                        processed_ids.add(item_id)
+                        items_found_this_scroll += 1
+                        logger.info(f"Scraped: {clean_title} - €{price} (ID: {item_id})")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to parse item link: {e}")
+                        continue
+                
+                # Track if we found new items
+                if items_found_this_scroll == 0:
+                    no_new_items_count += 1
+                else:
+                    no_new_items_count = 0
+                
+                logger.info(f"Scroll {scroll_attempts + 1}: Found {items_found_this_scroll} new items (Total: {len(items)})")
+                
+                # Scroll down
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(2)
-                new_height = self.driver.execute_script("return document.body.scrollHeight")
-                if new_height == last_height:
-                    break
-                last_height = new_height
                 scroll_attempts += 1
             
-            logger.info(f"Scrolled {scroll_attempts} times to load items")
-            
-            # Find all item links using data-testid (more reliable than class names)
-            item_links = self.driver.find_elements(By.CSS_SELECTOR, "[data-testid*='--overlay-link']")
-            
-            logger.info(f"Found {len(item_links)} item links")
-            
-            for link in item_links:
-                try:
-                    # Get item URL
-                    item_url = link.get_attribute('href')
-                    
-                    if not item_url or '/items/' not in item_url:
-                        continue
-                    
-                    # Get item ID from data-testid (format: "product-item-id-7819896031--overlay-link")
-                    testid = link.get_attribute('data-testid')
-                    if testid and 'product-item-id-' in testid:
-                        item_id = testid.replace('product-item-id-', '').split('--')[0]
-                    else:
-                        # Fallback: extract from URL
-                        item_id = item_url.split('/items/')[-1].split('-')[0]
-                    
-                    # Get title from the title attribute
-                    title = link.get_attribute('title')
-                    clean_title = title.split(',')[0] if title else f"Item {item_id}"
-                    
-                    # Get price using the exact data-testid pattern
-                    price = 0.0
-                    try:
-                        # Search the whole page for the price element with this item ID
-                        price_element = self.driver.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
-                        price_text = price_element.text.strip()
-                        # Remove € symbol and parse (e.g., "€13.00" or "13.00")
-                        price_text = price_text.replace('€', '').replace(',', '.').strip()
-                        price = float(price_text)
-                        logger.debug(f"Found price for {item_id}: €{price}")
-                    except Exception as e:
-                        logger.warning(f"Could not find price for item {item_id}: {e}")
-                        price = 0.0
-                    
-                    # Ensure URL is absolute
-                    if not item_url.startswith('http'):
-                        item_url = f"https://www.vinted.lv{item_url}"
-                    
-                    items.append({
-                        'id': item_id,
-                        'title': clean_title,
-                        'price': price,
-                        'url': item_url
-                    })
-                    
-                    logger.info(f"Scraped: {clean_title} - €{price} (ID: {item_id})")
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to parse item link: {e}")
-                    continue
+            logger.info(f"Completed scrolling after {scroll_attempts} scrolls")
             
             logger.info(f"Successfully scraped {len(items)} items")
             return items
@@ -388,20 +414,20 @@ class VintedPriceBot:
         # Setup sheet headers if needed
         try:
             headers = self.sheet.row_values(1)
-            if not headers or headers[0] != 'Item ID':
-                self.sheet.update('A1:H1', [[
-                    'Item ID', 'Title', 'Current Price', 'New Price', 
+            if not headers or headers[0] != 'Image':
+                self.sheet.update('A1:I1', [[
+                    'Image', 'Item ID', 'Title', 'Current Price', 'New Price', 
                     'Price Change %', 'Floor Price', 'Status', 'Last Updated'
                 ]])
         except:
-            self.sheet.update('A1:H1', [[
-                'Item ID', 'Title', 'Current Price', 'New Price', 
+            self.sheet.update('A1:I1', [[
+                'Image', 'Item ID', 'Title', 'Current Price', 'New Price', 
                 'Price Change %', 'Floor Price', 'Status', 'Last Updated'
             ]])
         
         # Get existing data
         existing_data = self.sheet.get_all_records()
-        existing_dict = {str(row['Item ID']): row for row in existing_data if row.get('Item ID')}
+        existing_dict = {str(row.get('Item ID', '')): row for row in existing_data if row.get('Item ID')}
         
         # Get current item IDs from Vinted
         current_item_ids = {item['id'] for item in items}
@@ -442,7 +468,7 @@ class VintedPriceBot:
             logger.info("ℹ️  No new or removed items")
         
         # Prepare updated data
-        updated_rows = [['Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
+        updated_rows = [['Image', 'Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
         
         # Add current items from Vinted (active items)
         for item in items:
@@ -490,7 +516,11 @@ class VintedPriceBot:
             item['price_change_percent'] = price_change_percent
             item['floor_price'] = floor_price if floor_price is not None else ''
             
+            # Create image formula for Google Sheets (=IMAGE("url"))
+            image_formula = f'=IMAGE("{item.get("image_url", "")}")' if item.get('image_url') else ''
+            
             updated_rows.append([
+                image_formula,
                 item_id,
                 item['title'],
                 current_price,
@@ -505,7 +535,10 @@ class VintedPriceBot:
         for item_id in removed_item_ids:
             if item_id in existing_dict:
                 old_data = existing_dict[item_id]
+                # Keep the old image if it exists
+                old_image = old_data.get('Image', '')
                 updated_rows.append([
+                    old_image,
                     item_id,
                     old_data.get('Title', 'Unknown'),
                     old_data.get('Current Price', 0),
@@ -518,12 +551,12 @@ class VintedPriceBot:
         
         # Update entire sheet
         self.sheet.clear()
-        self.sheet.update('A1:H' + str(len(updated_rows)), updated_rows)
+        self.sheet.update('A1:I' + str(len(updated_rows)), updated_rows)
         
         # Format the sheet
         try:
             # Bold header
-            self.sheet.format('A1:H1', {
+            self.sheet.format('A1:I1', {
                 'textFormat': {'bold': True},
                 'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
             })
@@ -533,8 +566,8 @@ class VintedPriceBot:
                 # Find rows with sold/removed status and color them
                 all_values = self.sheet.get_all_values()
                 for idx, row in enumerate(all_values[1:], start=2):  # Skip header
-                    if len(row) > 6 and '❌' in str(row[6]):
-                        self.sheet.format(f'A{idx}:H{idx}', {
+                    if len(row) > 7 and '❌' in str(row[7]):  # Status is now column H (index 7)
+                        self.sheet.format(f'A{idx}:I{idx}', {
                             'backgroundColor': {'red': 1.0, 'green': 0.9, 'blue': 0.9},
                             'textFormat': {'strikethrough': True}
                         })
