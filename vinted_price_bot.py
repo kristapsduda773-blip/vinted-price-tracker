@@ -153,46 +153,142 @@ class VintedPriceBot:
         
         try:
             self.driver.get('https://www.vinted.lv/')
-            time.sleep(3)
+            time.sleep(5)
+            
+            # Take screenshot for debugging
+            try:
+                self.driver.save_screenshot('/tmp/vinted_home.png')
+                logger.info("Screenshot saved: /tmp/vinted_home.png")
+            except:
+                pass
             
             # Accept cookies if present
             try:
-                cookie_button = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.ID, "onetrust-accept-btn-handler"))
-                )
-                cookie_button.click()
-                time.sleep(1)
-            except TimeoutException:
-                logger.info("No cookie banner found")
+                # Try multiple cookie button selectors
+                cookie_selectors = [
+                    "#onetrust-accept-btn-handler",
+                    "[data-testid='cookie-accept-button']",
+                    "button[id*='accept']",
+                    "button[class*='accept']"
+                ]
+                
+                for selector in cookie_selectors:
+                    try:
+                        cookie_button = WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        )
+                        cookie_button.click()
+                        logger.info(f"Clicked cookie button with selector: {selector}")
+                        time.sleep(1)
+                        break
+                    except:
+                        continue
+            except:
+                logger.info("No cookie banner found or already accepted")
             
-            # Click login button
-            login_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='header-login-button']"))
-            )
+            # Try multiple selectors for login button
+            logger.info("Looking for login button...")
+            login_button = None
+            login_selectors = [
+                "[data-testid='header-login-button']",
+                "a[href*='login']",
+                "button[data-testid*='login']",
+                ".navigation__button--login",
+                "a.navigation__link--login"
+            ]
+            
+            for selector in login_selectors:
+                try:
+                    logger.info(f"Trying selector: {selector}")
+                    login_button = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    logger.info(f"Found login button with selector: {selector}")
+                    break
+                except:
+                    continue
+            
+            if not login_button:
+                logger.error("Could not find login button")
+                # Save page source for debugging
+                with open('/tmp/vinted_page.html', 'w', encoding='utf-8') as f:
+                    f.write(self.driver.page_source)
+                logger.info("Page source saved to /tmp/vinted_page.html")
+                raise Exception("Login button not found")
+            
             login_button.click()
-            time.sleep(2)
+            time.sleep(3)
             
-            # Enter email
-            email_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, "username"))
-            )
+            # Enter email - try multiple selectors
+            logger.info("Looking for email input...")
+            email_input = None
+            email_selectors = ["#username", "input[name='login']", "input[type='email']", "input[id*='email']"]
+            
+            for selector in email_selectors:
+                try:
+                    email_input = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    logger.info(f"Found email input with selector: {selector}")
+                    break
+                except:
+                    continue
+            
+            if not email_input:
+                raise Exception("Email input not found")
+            
+            email_input.clear()
             email_input.send_keys(self.vinted_email)
+            logger.info("Email entered")
             
             # Enter password
-            password_input = self.driver.find_element(By.ID, "password")
+            password_input = self.driver.find_element(By.CSS_SELECTOR, "#password, input[name='password'], input[type='password']")
+            password_input.clear()
             password_input.send_keys(self.vinted_password)
+            logger.info("Password entered")
             
             # Submit login form
             submit_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
             submit_button.click()
+            logger.info("Login form submitted")
             
             # Wait for login to complete
-            time.sleep(5)
+            time.sleep(8)
             
-            logger.info("Successfully logged into Vinted")
+            # Verify login success by checking if we're redirected or see user menu
+            try:
+                # Check if user is logged in (look for user menu or profile link)
+                user_indicators = [
+                    "[data-testid='user-menu']",
+                    ".user-menu",
+                    "a[href*='/member/']"
+                ]
+                
+                logged_in = False
+                for selector in user_indicators:
+                    try:
+                        self.driver.find_element(By.CSS_SELECTOR, selector)
+                        logged_in = True
+                        break
+                    except:
+                        continue
+                
+                if logged_in:
+                    logger.info("Successfully logged into Vinted ✓")
+                else:
+                    logger.warning("Login completed but cannot verify - continuing anyway")
+                    
+            except Exception as e:
+                logger.warning(f"Could not verify login status: {e}")
             
         except Exception as e:
             logger.error(f"Failed to login to Vinted: {e}")
+            # Save screenshot on error
+            try:
+                self.driver.save_screenshot('/tmp/vinted_login_error.png')
+                logger.info("Error screenshot saved: /tmp/vinted_login_error.png")
+            except:
+                pass
             raise
             
     def get_listed_items(self) -> List[Dict]:
