@@ -229,12 +229,22 @@ This bot automates interaction with Vinted's website. Use at your own risk:
 
 **Use responsibly and at your own discretion.**
 
+## Documentation
+
+- **README.md** (this file) - Complete setup and usage guide
+- **QUICKSTART.md** - Get started in 5 minutes
+- **GITHUB_ACTIONS_SETUP.md** - Deploy to GitHub Actions
+- **USAGE_GUIDE.md** - Detailed usage examples and scenarios
+- **QUICK_REFERENCE.md** - Quick commands cheat sheet
+
 ## Support
 
 For issues or questions:
 1. Check the logs for error messages
 2. Review the troubleshooting section
-3. Open an issue on GitHub with:
+3. Run `python test_connection.py` to diagnose
+4. See GITHUB_ACTIONS_SETUP.md for deployment help
+5. Open an issue on GitHub with:
    - Error message
    - Log excerpt (remove sensitive data)
    - Steps to reproduce
