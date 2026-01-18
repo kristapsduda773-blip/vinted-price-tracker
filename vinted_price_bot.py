@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
@@ -252,20 +253,77 @@ class VintedPriceBot:
             logger.info("✓ Password entered")
             time.sleep(1)
             
-            # Submit login form
-            submit_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-            submit_button.click()
-            logger.info("Login form submitted")
+            # Store the current URL before submitting
+            pre_submit_url = self.driver.current_url
             
-            # Wait for login to complete
-            time.sleep(8)
+            # Submit login form - try to find login/submit button
+            submit_button = None
+            submit_selectors = [
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//button[contains(., 'Login') or contains(., 'Pieteikt') or contains(., 'Sign in')]"),
+                (By.CSS_SELECTOR, "button.auth__button, button[class*='auth']"),
+            ]
+            
+            for by, selector in submit_selectors:
+                try:
+                    submit_button = self.driver.find_element(by, selector)
+                    if submit_button:
+                        logger.info(f"Found submit button with: {selector}")
+                        break
+                except:
+                    pass
+            
+            if not submit_button:
+                logger.error("Could not find submit button")
+                raise Exception("Submit button not found")
+            
+            # Click submit and wait for redirect
+            try:
+                submit_button.click()
+                logger.info("Login form submitted via button click")
+            except Exception as e:
+                logger.warning(f"Button click failed: {e}, trying Enter key instead...")
+                # Fallback: press Enter on password field
+                password_input.send_keys(Keys.RETURN)
+                logger.info("Login form submitted via Enter key")
+            
+            # Wait for navigation away from signup/login page
+            logger.info("Waiting for redirect after login...")
+            redirect_success = False
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    lambda d: '/signup' not in d.current_url and '/login' not in d.current_url and d.current_url != pre_submit_url
+                )
+                logger.info(f"✓ Redirected to: {self.driver.current_url}")
+                redirect_success = True
+            except:
+                logger.warning(f"No redirect detected after 15s, still on: {self.driver.current_url}")
+                
+                # Try Enter key as fallback if button click didn't work
+                if self.driver.current_url == pre_submit_url:
+                    logger.info("Trying Enter key on password field as fallback...")
+                    try:
+                        password_input.send_keys(Keys.RETURN)
+                        time.sleep(3)
+                        WebDriverWait(self.driver, 10).until(
+                            lambda d: d.current_url != pre_submit_url
+                        )
+                        logger.info(f"✓ Redirected after Enter key: {self.driver.current_url}")
+                        redirect_success = True
+                    except:
+                        logger.error("Enter key fallback also failed")
+            
+            time.sleep(3)  # Additional wait for page to stabilize
             
             # Verify login success
             current_url = self.driver.current_url
             logger.info(f"After login, current URL: {current_url}")
             
-            if '/login' in current_url:
-                # Still on login page - check for errors
+            # Check if we're still on login/signup pages
+            if any(x in current_url for x in ['/login', '/signup', '/signin']):
+                # Still on login/signup page - check for errors
+                logger.error("⚠️ Still on login/signup page after submission!")
+                
                 try:
                     error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".form__error, .error, [class*='error']")
                     if error_elements:
@@ -274,10 +332,18 @@ class VintedPriceBot:
                 except:
                     pass
                 
+                # Debug: Check if form is still visible
+                try:
+                    email_field = self.driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='email']")
+                    password_field = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+                    logger.error(f"Debug: Email fields found: {len(email_field)}, Password fields: {len(password_field)}")
+                except:
+                    pass
+                
                 with open('/tmp/vinted_login_failed.html', 'w', encoding='utf-8') as f:
                     f.write(self.driver.page_source)
-                logger.error("Login verification failed - still on login page. Page source saved.")
-                raise Exception("Login failed - still on login page. Check credentials.")
+                logger.error("Login verification failed. Page source saved.")
+                raise Exception("Login failed - still on login/signup page. Check credentials or form submission.")
             else:
                 logger.info("✓ Successfully logged in!")
             
