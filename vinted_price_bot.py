@@ -195,15 +195,15 @@ class VintedPriceBot:
             except:
                 logger.info("No cookie banner found")
             
-            # STEP 1: Click "Pieteikties" on "Vai jums jau ir konts?Pieteikties" (Already have account? Login)
-            logger.info("STEP 1: Looking for 'Pieteikties' link (Already have account?)...")
+            # STEP 1: Click "Pieteikties" - it's a SPAN element, not a link!
+            logger.info("STEP 1: Looking for 'Pieteikties' span (Already have account?)...")
             try:
                 login_mode_selectors = [
-                    (By.PARTIAL_LINK_TEXT, "Pieteikties"),  # "Login" in Latvian
-                    (By.LINK_TEXT, "Pieteikties"),
-                    (By.XPATH, "//a[contains(text(), 'Pieteikties')]"),
-                    (By.XPATH, "//a[contains(., 'konts')]"),  # "account" in Latvian
-                    (By.CSS_SELECTOR, "a[href*='login']"),
+                    (By.XPATH, "//span[contains(text(), 'Pieteikties')]"),  # Span with text
+                    (By.XPATH, "//span[@class='web_ui__Text__underline' and contains(text(), 'Pieteikties')]"),  # With underline class
+                    (By.XPATH, "//span[contains(@class, 'underline') and contains(text(), 'Pieteikties')]"),
+                    (By.PARTIAL_LINK_TEXT, "Pieteikties"),  # Fallback: try as link
+                    (By.XPATH, "//a[contains(text(), 'Pieteikties')]"),  # Fallback: try as link
                 ]
                 
                 login_link = None
@@ -212,7 +212,7 @@ class VintedPriceBot:
                         login_link = WebDriverWait(self.driver, 5).until(
                             EC.element_to_be_clickable((by, selector))
                         )
-                        logger.info(f"Found 'Pieteikties' link with: {by}={selector}")
+                        logger.info(f"Found 'Pieteikties' element with: {by}={selector}")
                         break
                     except:
                         continue
@@ -220,74 +220,59 @@ class VintedPriceBot:
                 if login_link:
                     try:
                         login_link.click()
-                        logger.info("✓ Clicked 'Pieteikties' link")
+                        logger.info("✓ Clicked 'Pieteikties' span")
                     except:
                         self.driver.execute_script("arguments[0].click();", login_link)
-                        logger.info("✓ Clicked 'Pieteikties' link via JavaScript")
+                        logger.info("✓ Clicked 'Pieteikties' span via JavaScript")
                     time.sleep(4)  # Wait longer for the page to update and show email option
                 else:
-                    logger.warning("No 'Pieteikties' link found")
+                    logger.warning("No 'Pieteikties' element found")
                     
             except Exception as e:
-                logger.warning(f"Error clicking 'Pieteikties' link: {e}")
+                logger.warning(f"Error clicking 'Pieteikties': {e}")
             
-            # STEP 2: Click "e-pasta adrese" (email address) link/button
-            logger.info("STEP 2: Looking for 'e-pasta adrese' link/button...")
+            # STEP 2: Click "e-pasta adrese" (email address) - it's a SPAN element, not a link/button!
+            logger.info("STEP 2: Looking for 'e-pasta adrese' span element...")
             
             # Wait a moment for the page to update after clicking Pieteikties
             time.sleep(2)
             
-            # First, try to find it directly with exact text match
+            # Find the span element with "e-pasta adrese" text
             email_option_button = None
             try:
-                # Try exact text match first
+                # Try to find span with exact text
                 email_option_button = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "e-pasta adrese"))
+                    EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'e-pasta adrese')]"))
                 )
-                logger.info(f"✓ Found 'e-pasta adrese' link: '{email_option_button.text}'")
+                logger.info(f"✓ Found 'e-pasta adrese' span: '{email_option_button.text}'")
             except:
                 try:
-                    # Try as button
+                    # Try partial match
                     email_option_button = WebDriverWait(self.driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'e-pasta adrese')]"))
+                        EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'e-pasta')]"))
                     )
-                    logger.info(f"✓ Found 'e-pasta adrese' button: '{email_option_button.text}'")
+                    logger.info(f"✓ Found 'e-pasta' span: '{email_option_button.text}'")
                 except:
-                    # Debug: List all visible buttons/links to see what's available
+                    # Try finding by class (web_ui__Text__underline)
                     try:
-                        all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
-                        all_links = self.driver.find_elements(By.TAG_NAME, "a")
-                        logger.info(f"Found {len(all_buttons)} buttons and {len(all_links)} links on page")
-                        
-                        visible_buttons = [b for b in all_buttons if b.is_displayed()]
-                        visible_links = [l for l in all_links if l.is_displayed()]
-                        
-                        logger.info(f"Visible links ({len(visible_links)}):")
-                        for idx, link in enumerate(visible_links):
-                            text = link.text.strip()
-                            href = link.get_attribute('href')
-                            # Show all links, especially ones with e-pasta or email-related text
-                            if text or 'e-pasta' in (href or '').lower() or 'e-pasta' in text.lower() or 'email' in text.lower() or 'piesakieties' in text.lower() or 'reģistrējieties' in text.lower():
-                                logger.info(f"  Link {idx+1}: text='{text}', href='{href}'")
-                        
-                        # Search through all links for "e-pasta adrese"
-                        for link in visible_links:
-                            text = link.text.lower()
-                            if 'e-pasta adrese' in text or ('e-pasta' in text and 'adrese' in text):
-                                email_option_button = link
-                                logger.info(f"✓ Found email option in links: '{link.text}'")
-                                break
+                        all_spans = self.driver.find_elements(By.TAG_NAME, "span")
+                        for span in all_spans:
+                            if span.is_displayed():
+                                text = span.text.strip().lower()
+                                if 'e-pasta adrese' in text or ('e-pasta' in text and 'adrese' in text):
+                                    email_option_button = span
+                                    logger.info(f"✓ Found email option span: '{span.text}'")
+                                    break
                     except Exception as e:
-                        logger.warning(f"Could not list buttons/links: {e}")
+                        logger.warning(f"Could not search spans: {e}")
             
             try:
                 if not email_option_button:
                     # Try other selectors as fallback
                     email_option_selectors = [
-                        (By.PARTIAL_LINK_TEXT, "e-pasta"),  # Partial match
-                        (By.XPATH, "//a[contains(text(), 'e-pasta')]"),
-                        (By.XPATH, "//button[contains(text(), 'e-pasta')]"),
-                        (By.XPATH, "//a[contains(., 'reģistrējieties') and contains(., 'e-pasta')]"),  # "register using email"
+                        (By.XPATH, "//span[@class='web_ui__Text__underline' and contains(text(), 'e-pasta')]"),
+                        (By.XPATH, "//span[contains(@class, 'underline') and contains(text(), 'e-pasta')]"),
+                        (By.XPATH, "//span[contains(text(), 'e-pasta')]"),
                     ]
                     
                     for by, selector in email_option_selectors:
@@ -296,7 +281,7 @@ class VintedPriceBot:
                             for elem in elements:
                                 if elem.is_displayed():
                                     text = elem.text.lower()
-                                    # Look for "e-pasta" but EXCLUDE social login buttons
+                                    # Look for "e-pasta" but EXCLUDE social login
                                     if 'e-pasta' in text and 'apple' not in text and 'facebook' not in text and 'google' not in text:
                                         email_option_button = elem
                                         logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
