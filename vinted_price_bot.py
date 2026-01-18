@@ -195,23 +195,62 @@ class VintedPriceBot:
         try:
             headers = self.sheet.row_values(1)
             if not headers or headers[0] != 'Item ID':
-                self.sheet.update('A1:F1', [[
+                self.sheet.update('A1:G1', [[
                     'Item ID', 'Title', 'Current Price', 'New Price', 
-                    'Price Change %', 'Last Updated'
+                    'Price Change %', 'Status', 'Last Updated'
                 ]])
         except:
-            self.sheet.update('A1:F1', [[
+            self.sheet.update('A1:G1', [[
                 'Item ID', 'Title', 'Current Price', 'New Price', 
-                'Price Change %', 'Last Updated'
+                'Price Change %', 'Status', 'Last Updated'
             ]])
         
         # Get existing data
         existing_data = self.sheet.get_all_records()
-        existing_dict = {row['Item ID']: row for row in existing_data}
+        existing_dict = {str(row['Item ID']): row for row in existing_data if row.get('Item ID')}
+        
+        # Get current item IDs from Vinted
+        current_item_ids = {item['id'] for item in items}
+        
+        # Detect changes
+        new_items = []
+        updated_items = []
+        removed_item_ids = []
+        
+        # Check for new and updated items
+        for item in items:
+            item_id = item['id']
+            if item_id in existing_dict:
+                updated_items.append(item_id)
+            else:
+                new_items.append(item_id)
+        
+        # Check for removed items (in sheet but not on Vinted)
+        for item_id in existing_dict.keys():
+            if item_id not in current_item_ids:
+                removed_item_ids.append(item_id)
+        
+        # Log changes
+        if new_items:
+            logger.info(f"🆕 New items found: {len(new_items)}")
+            for item_id in new_items:
+                item = next((i for i in items if i['id'] == item_id), None)
+                if item:
+                    logger.info(f"   + {item['title']} (€{item['price']})")
+        
+        if removed_item_ids:
+            logger.info(f"🗑️  Removed items (likely sold): {len(removed_item_ids)}")
+            for item_id in removed_item_ids:
+                if item_id in existing_dict:
+                    logger.info(f"   - {existing_dict[item_id].get('Title', 'Unknown')}")
+        
+        if not new_items and not removed_item_ids:
+            logger.info("ℹ️  No new or removed items")
         
         # Prepare updated data
-        updated_rows = [['Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Last Updated']]
+        updated_rows = [['Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Status', 'Last Updated']]
         
+        # Add current items from Vinted (active items)
         for item in items:
             item_id = item['id']
             current_price = item['price']
@@ -231,6 +270,7 @@ class VintedPriceBot:
             else:
                 # New item, use default percentage
                 price_change_percent = self.default_percent
+                logger.info(f"   Using default {self.default_percent}% for new item: {item['title']}")
             
             # Calculate new price
             new_price = round(current_price * (1 + price_change_percent / 100), 2)
@@ -245,14 +285,53 @@ class VintedPriceBot:
                 current_price,
                 new_price,
                 price_change_percent,
+                'Active',
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ])
         
+        # Add removed items at the bottom (marked as sold/removed)
+        for item_id in removed_item_ids:
+            if item_id in existing_dict:
+                old_data = existing_dict[item_id]
+                updated_rows.append([
+                    item_id,
+                    old_data.get('Title', 'Unknown'),
+                    old_data.get('Current Price', 0),
+                    old_data.get('New Price', 0),
+                    old_data.get('Price Change %', 0),
+                    '❌ Sold/Removed',
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ])
+        
         # Update entire sheet
         self.sheet.clear()
-        self.sheet.update('A1:F' + str(len(updated_rows)), updated_rows)
+        self.sheet.update('A1:G' + str(len(updated_rows)), updated_rows)
         
-        logger.info(f"Google Sheets updated with {len(items)} items")
+        # Format the sheet
+        try:
+            # Bold header
+            self.sheet.format('A1:G1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            })
+            
+            # Color sold/removed items red
+            if removed_item_ids:
+                # Find rows with sold/removed status and color them
+                all_values = self.sheet.get_all_values()
+                for idx, row in enumerate(all_values[1:], start=2):  # Skip header
+                    if len(row) > 5 and '❌' in str(row[5]):
+                        self.sheet.format(f'A{idx}:G{idx}', {
+                            'backgroundColor': {'red': 1.0, 'green': 0.9, 'blue': 0.9},
+                            'textFormat': {'strikethrough': True}
+                        })
+        except Exception as e:
+            logger.warning(f"Could not format sheet: {e}")
+        
+        logger.info(f"📊 Google Sheets updated:")
+        logger.info(f"   Active items: {len(items)}")
+        logger.info(f"   Removed items: {len(removed_item_ids)}")
+        logger.info(f"   Total rows: {len(updated_rows) - 1}")
         
         return items
         
