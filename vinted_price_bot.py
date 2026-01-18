@@ -500,7 +500,7 @@ class VintedPriceBot:
             logger.info("ℹ️  No new or removed items")
         
         # Prepare updated data
-        updated_rows = [['Item ID', 'URL', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
+        updated_rows = [['Item ID', 'URL', 'Title', 'Current Price', 'New Price', 'Floor Price', 'Price Change %', 'Status', 'Last Updated']]
         
         # Add current items from Vinted (active items)
         for item in items:
@@ -560,8 +560,8 @@ class VintedPriceBot:
                 item['title'],
                 current_price,
                 new_price,
-                price_change_percent if not is_new_item else self.default_percent,  # Show default % for new items
-                floor_price if floor_price is not None else '',
+                floor_price if floor_price is not None else '',  # Floor Price first
+                price_change_percent if not is_new_item else self.default_percent,  # Price Change % second
                 status,
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ])
@@ -576,8 +576,8 @@ class VintedPriceBot:
                     old_data.get('Title', 'Unknown'),
                     old_data.get('Current Price', 0),
                     old_data.get('New Price', 0),
+                    old_data.get('Floor Price', ''),  # Floor Price first
                     0,  # Set Price Change % to 0 for sold items
-                    old_data.get('Floor Price', ''),
                     '❌ Sold/Removed',
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 ])
@@ -632,25 +632,38 @@ class VintedPriceBot:
             logger.info(f"   🗑️  Removed items: {len(removed_item_ids)}")
         logger.info(f"   Total rows: {len(updated_rows) - 1}")
         
-        return items
+        return items, existing_dict
         
-    def update_item_price(self, item: Dict):
+    def update_item_price(self, item: Dict, existing_dict: Dict = None):
         """Update price for a single item on Vinted"""
         logger.info(f"Updating price for: {item['title']}")
         
         try:
+            # Get URL from sheet if available, otherwise use item URL
+            item_id = item['id']
+            if existing_dict and item_id in existing_dict:
+                item_url = existing_dict[item_id].get('URL', '') or item.get('url', '')
+            else:
+                item_url = item.get('url', '')
+            
+            if not item_url:
+                logger.error(f"No URL found for item {item_id}")
+                return False
+            
+            logger.info(f"Using URL from sheet: {item_url}")
+            
             # Navigate to item page
-            self.driver.get(item['url'])
+            self.driver.get(item_url)
             time.sleep(5)  # Wait for page to fully load
             
             # Scroll to top to ensure edit button is visible
             self.driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(2)
             
-            # Click "Edit listing" button - find by span text
+            # Click "Edit listing" button - using exact data-testid
             logger.info("Looking for 'Edit listing' button...")
             edit_button = WebDriverWait(self.driver, 15).until(
-                EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Edit listing')]"))
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='item-edit-button']"))
             )
             # Scroll button into view
             self.driver.execute_script("arguments[0].scrollIntoView(true);", edit_button)
@@ -687,7 +700,8 @@ class VintedPriceBot:
             
             time.sleep(3)
             
-            logger.info(f"✓ Price updated: €{item['price']:.2f} → €{item['new_price']:.2f} ({item['price_change_percent']:.1f}%)")
+            percent_value = float(item.get('price_change_percent', 0))
+            logger.info(f"✓ Price updated: €{item['price']:.2f} → €{item['new_price']:.2f} ({percent_value:.1f}%)")
             
             return True
             
@@ -720,8 +734,8 @@ class VintedPriceBot:
                 logger.warning("No items found!")
                 return
             
-            # Sync with Google Sheets
-            items = self.sync_with_google_sheets(items)
+            # Sync with Google Sheets (returns items and existing_dict for URL lookup)
+            items, existing_dict = self.sync_with_google_sheets(items)
             
             # Now login for price updates
             logger.info("\n" + "=" * 60)
@@ -764,9 +778,11 @@ class VintedPriceBot:
                     logger.info(f"🧪 Testing price update on LAST item: {last_item['title']}")
                     logger.info(f"   Current price: €{last_item['price']}")
                     logger.info(f"   New price: €{last_item['new_price']}")
-                    logger.info(f"   Change: {last_item['price_change_percent']:.1f}%")
+                    # Ensure percentage is a float for display
+                    percent_value = float(last_item.get('price_change_percent', 0))
+                    logger.info(f"   Change: {percent_value:.1f}%")
                     
-                    if self.update_item_price(last_item):
+                    if self.update_item_price(last_item, existing_dict):
                         success_count += 1
                     
                     time.sleep(2)
