@@ -1,0 +1,8 @@
+selenium==4.17.2
+webdriver-manager==4.0.1
+gspread==5.12.4
+google-auth==2.27.0
+python-dotenv==1.0.1
+beautifulsoup4==4.12.3
+lxml==5.1.0
+
