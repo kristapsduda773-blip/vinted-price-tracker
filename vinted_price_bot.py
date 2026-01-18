@@ -710,28 +710,44 @@ class VintedPriceBot:
                 logger.warning("⚠️  Items saved to Google Sheet, but price updates skipped")
                 can_update = False
             
-            # Update prices (TESTING MODE: Only first item)
+            # Update prices (TESTING MODE: Only last item)
             if can_update:
-                logger.info("⚠️  TESTING MODE: Only updating first item with price change")
+                logger.info("⚠️  TESTING MODE: Only updating last item with price change")
                 success_count = 0
-                updated_count = 0
                 
+                # Find items that need price changes
+                items_to_update = [item for item in items if item['new_price'] != item['price']]
+                
+                if items_to_update:
+                    # Get the last item
+                    last_item = items_to_update[-1]
+                    
+                    # Skip all except the last
+                    for item in items_to_update[:-1]:
+                        logger.info(f"⏭️  Skipping {item['title']} - test mode (would change €{item['price']} → €{item['new_price']})")
+                    
+                    # Update only the last item
+                    logger.info(f"🧪 Testing price update on LAST item: {last_item['title']}")
+                    logger.info(f"   Current price: €{last_item['price']}")
+                    logger.info(f"   New price: €{last_item['new_price']}")
+                    logger.info(f"   Change: {last_item['price_change_percent']:+.1f}%")
+                    
+                    if self.update_item_price(last_item):
+                        success_count += 1
+                    
+                    time.sleep(2)
+                else:
+                    logger.info("No items need price changes")
+                
+                # Log items with no change needed
                 for item in items:
-                    if item['new_price'] != item['price']:
-                        if updated_count == 0:  # Only update first item
-                            logger.info(f"🧪 Testing price update on first item: {item['title']}")
-                            if self.update_item_price(item):
-                                success_count += 1
-                            updated_count += 1
-                            time.sleep(2)  # Be respectful with requests
-                        else:
-                            logger.info(f"⏭️  Skipping {item['title']} - test mode (would change €{item['price']} → €{item['new_price']})")
-                    else:
+                    if item['new_price'] == item['price']:
                         logger.info(f"Skipping {item['title']} - no price change needed")
                 
                 logger.info("=" * 60)
                 logger.info(f"Bot completed! Updated {success_count}/1 items (test mode)")
-                logger.info(f"⚠️  TEST MODE: {len([i for i in items if i['new_price'] != i['price']]) - updated_count} items skipped")
+                items_with_changes = len([i for i in items if i['new_price'] != i['price']])
+                logger.info(f"⚠️  TEST MODE: {items_with_changes - success_count} items skipped")
                 logger.info("=" * 60)
             else:
                 logger.info("=" * 60)
