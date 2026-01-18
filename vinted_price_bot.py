@@ -1,4 +1,4 @@
-"""
+v"""
 Vinted Price Tracker Bot
 Automatically updates Vinted item prices based on Google Sheets configuration
 """
@@ -154,7 +154,9 @@ class VintedPriceBot:
         try:
             # Go directly to login page
             self.driver.get('https://www.vinted.lv/member/login')
-            time.sleep(3)
+            time.sleep(5)
+            
+            logger.info(f"Loaded page: {self.driver.current_url}")
             
             # Accept cookies if present
             try:
@@ -163,24 +165,70 @@ class VintedPriceBot:
                 )
                 cookie_button.click()
                 logger.info("Accepted cookies")
-                time.sleep(1)
+                time.sleep(2)
             except:
                 logger.info("No cookie banner found")
             
-            # Find and fill email input
+            # Find and fill email input - try multiple selectors
             logger.info("Looking for email input...")
-            email_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, "username"))
-            )
+            email_input = None
+            email_selectors = [
+                (By.ID, "username"),
+                (By.NAME, "login"),
+                (By.CSS_SELECTOR, "input[name='login[login]']"),
+                (By.CSS_SELECTOR, "input[type='email']"),
+                (By.CSS_SELECTOR, "input[autocomplete='username']"),
+                (By.XPATH, "//input[@type='text' or @type='email']")
+            ]
+            
+            for by, selector in email_selectors:
+                try:
+                    email_input = WebDriverWait(self.driver, 3).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    logger.info(f"Found email input with: {by}={selector}")
+                    break
+                except:
+                    continue
+            
+            if not email_input:
+                # Save page source for debugging
+                with open('/tmp/vinted_login_page.html', 'w', encoding='utf-8') as f:
+                    f.write(self.driver.page_source)
+                logger.error("Could not find email input. Page source saved to /tmp/vinted_login_page.html")
+                raise Exception("Email input not found")
+            
             email_input.clear()
             email_input.send_keys(self.vinted_email)
             logger.info("Email entered")
+            time.sleep(1)
             
             # Find and fill password input
-            password_input = self.driver.find_element(By.ID, "password")
+            logger.info("Looking for password input...")
+            password_input = None
+            password_selectors = [
+                (By.ID, "password"),
+                (By.NAME, "password"),
+                (By.CSS_SELECTOR, "input[name='login[password]']"),
+                (By.CSS_SELECTOR, "input[type='password']"),
+                (By.CSS_SELECTOR, "input[autocomplete='current-password']")
+            ]
+            
+            for by, selector in password_selectors:
+                try:
+                    password_input = self.driver.find_element(by, selector)
+                    logger.info(f"Found password input with: {by}={selector}")
+                    break
+                except:
+                    continue
+            
+            if not password_input:
+                raise Exception("Password input not found")
+            
             password_input.clear()
             password_input.send_keys(self.vinted_password)
             logger.info("Password entered")
+            time.sleep(1)
             
             # Submit login form
             submit_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
@@ -188,25 +236,28 @@ class VintedPriceBot:
             logger.info("Login form submitted")
             
             # Wait for login to complete
-            time.sleep(5)
+            time.sleep(8)
             
             # Verify login success
-            try:
-                # After login, we should be redirected to feed or see user menu
-                WebDriverWait(self.driver, 10).until(
-                    lambda driver: '/login' not in driver.current_url
-                )
-                logger.info(f"✓ Successfully logged in! Current URL: {self.driver.current_url}")
-            except:
-                logger.warning("Still on login page - login may have failed")
-                # Save page source for debugging
+            current_url = self.driver.current_url
+            logger.info(f"After login, current URL: {current_url}")
+            
+            if '/login' in current_url:
+                # Still on login page - check for errors
                 try:
-                    with open('/tmp/vinted_login_failed.html', 'w', encoding='utf-8') as f:
-                        f.write(self.driver.page_source)
-                    logger.info("Page source saved to /tmp/vinted_login_failed.html")
+                    error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".form__error, .error, [class*='error']")
+                    if error_elements:
+                        error_text = ' | '.join([el.text for el in error_elements if el.text])
+                        logger.error(f"Login error message: {error_text}")
                 except:
                     pass
-                raise Exception("Login verification failed - still on login page")
+                
+                with open('/tmp/vinted_login_failed.html', 'w', encoding='utf-8') as f:
+                    f.write(self.driver.page_source)
+                logger.error("Login verification failed - still on login page. Page source saved.")
+                raise Exception("Login failed - still on login page. Check credentials.")
+            else:
+                logger.info("✓ Successfully logged in!")
             
         except Exception as e:
             logger.error(f"Failed to login to Vinted: {e}")
