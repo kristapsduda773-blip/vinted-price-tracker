@@ -171,17 +171,43 @@ class VintedPriceBot:
             except:
                 logger.info("No cookie banner found")
             
-            # Wait for the login form to be present (sometimes it's lazy-loaded)
-            logger.info("Waiting for login form to load...")
+            # Click the "Login with Email" button to reveal the email/password form
+            logger.info("Looking for 'Login with Email' button...")
             try:
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "form, [class*='form'], [class*='login']"))
-                )
-                logger.info("Form detected on page")
-                time.sleep(2)  # Extra wait for form to fully render
-            except:
-                logger.warning("Could not detect form element, continuing anyway...")
-                time.sleep(3)
+                # Look for the email/password login option button
+                email_option_selectors = [
+                    (By.PARTIAL_LINK_TEXT, "e-pasta adresi"),  # "email address" in Latvian
+                    (By.PARTIAL_LINK_TEXT, "e-pasts"),
+                    (By.XPATH, "//button[contains(., 'e-pasta')]"),
+                    (By.XPATH, "//a[contains(., 'e-pasta')]"),
+                    (By.CSS_SELECTOR, "button[class*='email']"),
+                    (By.CSS_SELECTOR, "a[class*='email']"),
+                ]
+                
+                email_option_button = None
+                for by, selector in email_option_selectors:
+                    try:
+                        email_option_button = WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((by, selector))
+                        )
+                        logger.info(f"Found email option with: {by}={selector}")
+                        break
+                    except:
+                        continue
+                
+                if email_option_button:
+                    email_option_button.click()
+                    logger.info("Clicked 'Login with Email' button")
+                    time.sleep(2)
+                else:
+                    logger.warning("Could not find email option button, form might already be visible")
+                    
+            except Exception as e:
+                logger.warning(f"Error clicking email option: {e}")
+            
+            # Wait for the login form to be fully visible
+            logger.info("Waiting for login form to be interactive...")
+            time.sleep(2)
             
             # Find and fill email input - try multiple selectors
             logger.info("Looking for email input...")
@@ -234,6 +260,15 @@ class VintedPriceBot:
                 logger.error("Page source saved to /tmp/vinted_login_page.html")
                 raise Exception("Email input not found")
             
+            # Scroll element into view and make sure it's interactable
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", email_input)
+            time.sleep(0.5)
+            
+            # Wait for element to be clickable
+            WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable(email_input)
+            )
+            
             email_input.clear()
             email_input.send_keys(self.vinted_email)
             logger.info("Email entered")
@@ -262,6 +297,10 @@ class VintedPriceBot:
             
             if not password_input:
                 raise Exception("Password input not found")
+            
+            # Scroll element into view and make sure it's interactable
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", password_input)
+            time.sleep(0.5)
             
             password_input.clear()
             password_input.send_keys(self.vinted_password)
