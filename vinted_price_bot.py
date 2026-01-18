@@ -318,15 +318,16 @@ class VintedPriceBot:
             
             logger.info(f"Scrolled {scroll_attempts} times to load items")
             
-            # Find all item links - using the actual selector from Vinted
-            item_links = self.driver.find_elements(By.CSS_SELECTOR, "a.new-item-box__overlay")
+            # Find all item containers - each item is in a container with the link and price
+            item_containers = self.driver.find_elements(By.CSS_SELECTOR, ".new-item-box")
             
-            logger.info(f"Found {len(item_links)} item links")
+            logger.info(f"Found {len(item_containers)} item containers")
             
-            for link_element in item_links:
+            for container in item_containers:
                 try:
-                    # Get item URL
-                    item_url = link_element.get_attribute('href')
+                    # Get the link element with item URL
+                    link = container.find_element(By.CSS_SELECTOR, "a.new-item-box__overlay")
+                    item_url = link.get_attribute('href')
                     
                     if not item_url or '/items/' not in item_url:
                         continue
@@ -335,33 +336,45 @@ class VintedPriceBot:
                     item_id = item_url.split('/items/')[-1].split('-')[0]
                     
                     # Get title from the title attribute
-                    title = link_element.get_attribute('title')
+                    title = link.get_attribute('title')
+                    clean_title = title.split(',')[0] if title else f"Item {item_id}"
                     
-                    # Extract price from title (format: "...size: L, 13.00 €")
+                    # Get price using the exact data-testid pattern
                     price = 0.0
                     try:
-                        if title and '€' in title:
-                            # Price is at the end of the title
-                            price_part = title.split('€')[0].split(',')[-1].strip()
-                            price = float(price_part)
+                        # Try to find price element with specific item ID
+                        price_element = container.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
+                        price_text = price_element.text.strip()
+                        # Remove € symbol and parse (e.g., "€13.00" or "13.00")
+                        price_text = price_text.replace('€', '').replace(',', '.').strip()
+                        price = float(price_text)
+                        logger.debug(f"Parsed price for {item_id}: '{price_element.text}' -> €{price}")
                     except Exception as e:
-                        logger.warning(f"Could not parse price from title: {e}")
-                        price = 0.0
+                        logger.warning(f"Could not find price for item {item_id}: {e}")
+                        # Try alternative: any price text element in this container
+                        try:
+                            price_element = container.find_element(By.CSS_SELECTOR, "[data-testid*='--price-text']")
+                            price_text = price_element.text.strip().replace('€', '').replace(',', '.').strip()
+                            price = float(price_text)
+                            logger.debug(f"Used fallback price selector: €{price}")
+                        except:
+                            price = 0.0
                     
-                    # Clean up title (remove price and extra info)
-                    clean_title = title.split(',')[0] if title else f"Item {item_id}"
+                    # Ensure URL is absolute
+                    if not item_url.startswith('http'):
+                        item_url = f"https://www.vinted.lv{item_url}"
                     
                     items.append({
                         'id': item_id,
                         'title': clean_title,
                         'price': price,
-                        'url': item_url if item_url.startswith('http') else f"https://www.vinted.lv{item_url}"
+                        'url': item_url
                     })
                     
                     logger.info(f"Scraped: {clean_title} - €{price} (ID: {item_id})")
                     
                 except Exception as e:
-                    logger.warning(f"Failed to parse item: {e}")
+                    logger.warning(f"Failed to parse item container: {e}")
                     continue
             
             logger.info(f"Successfully scraped {len(items)} items")
