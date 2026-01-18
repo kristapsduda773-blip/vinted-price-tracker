@@ -171,7 +171,39 @@ class VintedPriceBot:
             except:
                 logger.info("No cookie banner found")
             
-            # Click the "Login with Email" button to reveal the email/password form
+            # First, look for "Already have an account? Login" link to switch to login mode
+            logger.info("Looking for 'Already have account? Login' link...")
+            try:
+                login_mode_selectors = [
+                    (By.LINK_TEXT, "Pieteikties"),  # "Login" in Latvian
+                    (By.PARTIAL_LINK_TEXT, "Pieteikties"),
+                    (By.XPATH, "//a[contains(text(), 'Pieteikties')]"),
+                    (By.XPATH, "//a[contains(., 'konts')]"),  # "account" in Latvian
+                    (By.CSS_SELECTOR, "a[href*='login']"),
+                ]
+                
+                login_link = None
+                for by, selector in login_mode_selectors:
+                    try:
+                        login_link = WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((by, selector))
+                        )
+                        logger.info(f"Found 'Login' link with: {by}={selector}")
+                        break
+                    except:
+                        continue
+                
+                if login_link:
+                    login_link.click()
+                    logger.info("Clicked 'Login' link to switch to login mode")
+                    time.sleep(3)
+                else:
+                    logger.info("No 'Login' link found, might already be in login mode")
+                    
+            except Exception as e:
+                logger.warning(f"Error clicking login link: {e}")
+            
+            # Now look for "Login with Email" button to reveal the email/password form
             logger.info("Looking for 'Login with Email' button...")
             try:
                 # Look for the email/password login option button
@@ -200,7 +232,7 @@ class VintedPriceBot:
                     logger.info("Clicked 'Login with Email' button")
                     time.sleep(2)
                 else:
-                    logger.warning("Could not find email option button, form might already be visible")
+                    logger.info("No email button found, email form might already be visible")
                     
             except Exception as e:
                 logger.warning(f"Error clicking email option: {e}")
@@ -262,16 +294,25 @@ class VintedPriceBot:
             
             # Scroll element into view and make sure it's interactable
             self.driver.execute_script("arguments[0].scrollIntoView(true);", email_input)
-            time.sleep(0.5)
+            time.sleep(1)
             
-            # Wait for element to be clickable
-            WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable(email_input)
-            )
+            # Try to click/interact with the element
+            try:
+                # Use JavaScript click if normal click fails
+                try:
+                    email_input.click()
+                except:
+                    self.driver.execute_script("arguments[0].click();", email_input)
+                    
+                email_input.clear()
+                email_input.send_keys(self.vinted_email)
+                logger.info("Email entered")
+            except Exception as e:
+                # Last resort: use JavaScript to set value
+                logger.warning(f"Normal input failed, using JavaScript: {e}")
+                self.driver.execute_script(f"arguments[0].value = '{self.vinted_email}';", email_input)
+                logger.info("Email entered via JavaScript")
             
-            email_input.clear()
-            email_input.send_keys(self.vinted_email)
-            logger.info("Email entered")
             time.sleep(1)
             
             # Find and fill password input
@@ -300,11 +341,25 @@ class VintedPriceBot:
             
             # Scroll element into view and make sure it's interactable
             self.driver.execute_script("arguments[0].scrollIntoView(true);", password_input)
-            time.sleep(0.5)
+            time.sleep(1)
             
-            password_input.clear()
-            password_input.send_keys(self.vinted_password)
-            logger.info("Password entered")
+            # Try to click/interact with the element
+            try:
+                # Use JavaScript click if normal click fails
+                try:
+                    password_input.click()
+                except:
+                    self.driver.execute_script("arguments[0].click();", password_input)
+                    
+                password_input.clear()
+                password_input.send_keys(self.vinted_password)
+                logger.info("Password entered")
+            except Exception as e:
+                # Last resort: use JavaScript to set value
+                logger.warning(f"Normal input failed, using JavaScript: {e}")
+                self.driver.execute_script(f"arguments[0].value = '{self.vinted_password}';", password_input)
+                logger.info("Password entered via JavaScript")
+            
             time.sleep(1)
             
             # Submit login form
