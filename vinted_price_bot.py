@@ -66,26 +66,61 @@ class VintedPriceBot:
         
         try:
             # Get ChromeDriver path
-            driver_path = ChromeDriverManager().install()
-            
-            # Fix for webdriver-manager bug - ensure we get the actual chromedriver binary
             import os
-            if os.path.isfile(driver_path):
-                # If it's a file, use it directly
+            driver_path = ChromeDriverManager().install()
+            logger.info(f"ChromeDriver manager returned: {driver_path}")
+            
+            # Fix for webdriver-manager bug - find the actual chromedriver binary
+            actual_driver = None
+            
+            # Check if it's directly the chromedriver file
+            if os.path.isfile(driver_path) and (driver_path.endswith('chromedriver') or driver_path.endswith('chromedriver.exe')):
                 actual_driver = driver_path
             else:
-                # If it's a directory, find the chromedriver binary
-                if os.path.isdir(driver_path):
-                    # Look for chromedriver in the directory
-                    for file in os.listdir(driver_path):
-                        if file == 'chromedriver' or file == 'chromedriver.exe':
-                            actual_driver = os.path.join(driver_path, file)
+                # Navigate up to find the base directory
+                base_dir = driver_path
+                
+                # If the path points to a non-chromedriver file, go to parent directory
+                if os.path.isfile(base_dir):
+                    base_dir = os.path.dirname(base_dir)
+                
+                # Search for chromedriver in this directory and subdirectories
+                logger.info(f"Searching for chromedriver in: {base_dir}")
+                
+                # Common locations
+                possible_paths = [
+                    os.path.join(base_dir, 'chromedriver'),
+                    os.path.join(base_dir, 'chromedriver.exe'),
+                    os.path.join(base_dir, 'chromedriver-linux64', 'chromedriver'),
+                    os.path.join(base_dir, 'chromedriver-win64', 'chromedriver.exe'),
+                    os.path.join(base_dir, 'chromedriver-mac64', 'chromedriver'),
+                ]
+                
+                # Try each possible path
+                for path in possible_paths:
+                    if os.path.isfile(path):
+                        actual_driver = path
+                        logger.info(f"Found chromedriver at: {actual_driver}")
+                        break
+                
+                # If still not found, walk the directory tree
+                if not actual_driver:
+                    for root, dirs, files in os.walk(base_dir):
+                        if 'chromedriver' in files:
+                            actual_driver = os.path.join(root, 'chromedriver')
+                            logger.info(f"Found chromedriver via walk at: {actual_driver}")
                             break
-                    else:
-                        # Fallback: use the path as-is
-                        actual_driver = driver_path
-                else:
-                    actual_driver = driver_path
+                        elif 'chromedriver.exe' in files:
+                            actual_driver = os.path.join(root, 'chromedriver.exe')
+                            logger.info(f"Found chromedriver.exe via walk at: {actual_driver}")
+                            break
+            
+            if not actual_driver or not os.path.isfile(actual_driver):
+                raise Exception(f"Could not find chromedriver binary in {driver_path}")
+            
+            # Make sure it's executable on Linux/Mac
+            if not actual_driver.endswith('.exe'):
+                os.chmod(actual_driver, 0o755)
             
             logger.info(f"Using ChromeDriver at: {actual_driver}")
             service = Service(actual_driver)
