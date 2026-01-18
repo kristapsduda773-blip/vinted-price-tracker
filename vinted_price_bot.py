@@ -348,19 +348,32 @@ class VintedPriceBot:
                             # Now find price within this container
                             price_element = parent.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
                             
-                            # Wait for text to be present (sometimes loads async)
+                            # Wait for text to be present (Vinted lazy-loads prices)
                             price_text = price_element.text.strip()
-                            if not price_text:
-                                time.sleep(0.2)  # Brief wait for text to load
+                            attempts = 0
+                            while not price_text and attempts < 5:
+                                time.sleep(0.1)  # Wait for lazy load
                                 price_text = price_element.text.strip()
+                                attempts += 1
                             
                             if price_text:
                                 # Remove € symbol and parse (e.g., "€13.00" or "13.00")
                                 price_text = price_text.replace('€', '').replace(',', '.').strip()
                                 price = float(price_text)
                             else:
-                                logger.warning(f"Price element found but empty for item {item_id}")
-                                price = 0.0
+                                # Price element exists but still empty - item may not be fully loaded yet
+                                # Try one more time with JavaScript
+                                try:
+                                    price_text = self.driver.execute_script("return arguments[0].textContent;", price_element).strip()
+                                    if price_text:
+                                        price_text = price_text.replace('€', '').replace(',', '.').strip()
+                                        price = float(price_text)
+                                    else:
+                                        logger.warning(f"Price element found but empty for item {item_id}")
+                                        price = 0.0
+                                except:
+                                    logger.warning(f"Price element found but empty for item {item_id}")
+                                    price = 0.0
                         except NoSuchElementException:
                             logger.warning(f"Price element not found for item {item_id}")
                             price = 0.0
@@ -413,23 +426,45 @@ class VintedPriceBot:
         """Sync items with Google Sheets and get price change percentages"""
         logger.info("Syncing with Google Sheets...")
         
-        # Setup sheet headers if needed
+        # Get existing data before setting headers (in case sheet has old format)
+        existing_dict = {}
         try:
-            headers = self.sheet.row_values(1)
-            if not headers or headers[0] != 'Item ID':
-                self.sheet.update('A1:H1', [[
-                    'Item ID', 'Title', 'Current Price', 'New Price', 
-                    'Price Change %', 'Floor Price', 'Status', 'Last Updated'
-                ]])
-        except:
-            self.sheet.update('A1:H1', [[
-                'Item ID', 'Title', 'Current Price', 'New Price', 
-                'Price Change %', 'Floor Price', 'Status', 'Last Updated'
-            ]])
-        
-        # Get existing data
-        existing_data = self.sheet.get_all_records()
-        existing_dict = {str(row.get('Item ID', '')): row for row in existing_data if row.get('Item ID')}
+            existing_data = self.sheet.get_all_records()
+            existing_dict = {str(row.get('Item ID', '')): row for row in existing_data if row.get('Item ID')}
+        except Exception as e:
+            logger.warning(f"Could not read existing sheet data (may have duplicate headers): {e}")
+            # Try to read manually by getting all values
+            try:
+                all_values = self.sheet.get_all_values()
+                if len(all_values) > 1:
+                    # Find the header row with 'Item ID'
+                    header_row = None
+                    for idx, row in enumerate(all_values):
+                        if 'Item ID' in row:
+                            header_row = idx
+                            headers = row
+                            break
+                    
+                    if header_row is not None and len(all_values) > header_row + 1:
+                        # Parse manually
+                        item_id_col = headers.index('Item ID')
+                        for row in all_values[header_row + 1:]:
+                            if len(row) > item_id_col and row[item_id_col]:
+                                item_id = str(row[item_id_col])
+                                existing_dict[item_id] = {
+                                    'Item ID': row[item_id_col] if len(row) > item_id_col else '',
+                                    'Title': row[headers.index('Title')] if 'Title' in headers and len(row) > headers.index('Title') else '',
+                                    'Current Price': row[headers.index('Current Price')] if 'Current Price' in headers and len(row) > headers.index('Current Price') else 0,
+                                    'New Price': row[headers.index('New Price')] if 'New Price' in headers and len(row) > headers.index('New Price') else 0,
+                                    'Price Change %': row[headers.index('Price Change %')] if 'Price Change %' in headers and len(row) > headers.index('Price Change %') else '',
+                                    'Floor Price': row[headers.index('Floor Price')] if 'Floor Price' in headers and len(row) > headers.index('Floor Price') else '',
+                                    'Status': row[headers.index('Status')] if 'Status' in headers and len(row) > headers.index('Status') else '',
+                                    'Last Updated': row[headers.index('Last Updated')] if 'Last Updated' in headers and len(row) > headers.index('Last Updated') else ''
+                                }
+                        logger.info(f"Manually parsed {len(existing_dict)} existing items from sheet")
+            except Exception as e2:
+                logger.warning(f"Could not manually parse sheet data: {e2}")
+                existing_dict = {}
         
         # Get current item IDs from Vinted
         current_item_ids = {item['id'] for item in items}
