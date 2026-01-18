@@ -340,30 +340,33 @@ class VintedPriceBot:
                         title = link.get_attribute('title')
                         clean_title = title.split(',')[0] if title else f"Item {item_id}"
                         
-                        # Get price using the exact data-testid pattern
+                        # Get price - search within the parent container, not the whole page
                         price = 0.0
                         try:
-                            # Search for the price element with this item ID (it should be visible)
-                            price_element = self.driver.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
+                            # Find the parent container that holds both link and price
+                            parent = link.find_element(By.XPATH, '../..')
+                            # Now find price within this container
+                            price_element = parent.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
+                            
+                            # Wait for text to be present (sometimes loads async)
                             price_text = price_element.text.strip()
-                            # Remove € symbol and parse (e.g., "€13.00" or "13.00")
-                            price_text = price_text.replace('€', '').replace(',', '.').strip()
-                            price = float(price_text)
-                        except Exception as e:
-                            logger.warning(f"Could not find price for item {item_id}: {e}")
+                            if not price_text:
+                                time.sleep(0.2)  # Brief wait for text to load
+                                price_text = price_element.text.strip()
+                            
+                            if price_text:
+                                # Remove € symbol and parse (e.g., "€13.00" or "13.00")
+                                price_text = price_text.replace('€', '').replace(',', '.').strip()
+                                price = float(price_text)
+                            else:
+                                logger.warning(f"Price element found but empty for item {item_id}")
+                                price = 0.0
+                        except NoSuchElementException:
+                            logger.warning(f"Price element not found for item {item_id}")
                             price = 0.0
-                        
-                        # Get image URL
-                        image_url = ''
-                        try:
-                            # Find image element within the link's parent container
-                            parent = link.find_element(By.XPATH, '..')
-                            img = parent.find_element(By.CSS_SELECTOR, 'img')
-                            image_url = img.get_attribute('src')
-                            if not image_url:
-                                image_url = img.get_attribute('data-src')  # Lazy-loaded images
                         except Exception as e:
-                            logger.debug(f"Could not find image for item {item_id}: {e}")
+                            logger.warning(f"Error getting price for item {item_id}: {e}")
+                            price = 0.0
                         
                         # Ensure URL is absolute
                         if not item_url.startswith('http'):
@@ -373,8 +376,7 @@ class VintedPriceBot:
                             'id': item_id,
                             'title': clean_title,
                             'price': price,
-                            'url': item_url,
-                            'image_url': image_url
+                            'url': item_url
                         })
                         
                         processed_ids.add(item_id)
@@ -414,14 +416,14 @@ class VintedPriceBot:
         # Setup sheet headers if needed
         try:
             headers = self.sheet.row_values(1)
-            if not headers or headers[0] != 'Image':
-                self.sheet.update('A1:I1', [[
-                    'Image', 'Item ID', 'Title', 'Current Price', 'New Price', 
+            if not headers or headers[0] != 'Item ID':
+                self.sheet.update('A1:H1', [[
+                    'Item ID', 'Title', 'Current Price', 'New Price', 
                     'Price Change %', 'Floor Price', 'Status', 'Last Updated'
                 ]])
         except:
-            self.sheet.update('A1:I1', [[
-                'Image', 'Item ID', 'Title', 'Current Price', 'New Price', 
+            self.sheet.update('A1:H1', [[
+                'Item ID', 'Title', 'Current Price', 'New Price', 
                 'Price Change %', 'Floor Price', 'Status', 'Last Updated'
             ]])
         
@@ -468,7 +470,7 @@ class VintedPriceBot:
             logger.info("ℹ️  No new or removed items")
         
         # Prepare updated data
-        updated_rows = [['Image', 'Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
+        updated_rows = [['Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
         
         # Add current items from Vinted (active items)
         for item in items:
@@ -516,11 +518,7 @@ class VintedPriceBot:
             item['price_change_percent'] = price_change_percent
             item['floor_price'] = floor_price if floor_price is not None else ''
             
-            # Create image formula for Google Sheets (=IMAGE("url"))
-            image_formula = f'=IMAGE("{item.get("image_url", "")}")' if item.get('image_url') else ''
-            
             updated_rows.append([
-                image_formula,
                 item_id,
                 item['title'],
                 current_price,
@@ -535,10 +533,7 @@ class VintedPriceBot:
         for item_id in removed_item_ids:
             if item_id in existing_dict:
                 old_data = existing_dict[item_id]
-                # Keep the old image if it exists
-                old_image = old_data.get('Image', '')
                 updated_rows.append([
-                    old_image,
                     item_id,
                     old_data.get('Title', 'Unknown'),
                     old_data.get('Current Price', 0),
@@ -551,12 +546,12 @@ class VintedPriceBot:
         
         # Update entire sheet
         self.sheet.clear()
-        self.sheet.update('A1:I' + str(len(updated_rows)), updated_rows)
+        self.sheet.update('A1:H' + str(len(updated_rows)), updated_rows)
         
         # Format the sheet
         try:
             # Bold header
-            self.sheet.format('A1:I1', {
+            self.sheet.format('A1:H1', {
                 'textFormat': {'bold': True},
                 'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
             })
@@ -566,8 +561,8 @@ class VintedPriceBot:
                 # Find rows with sold/removed status and color them
                 all_values = self.sheet.get_all_values()
                 for idx, row in enumerate(all_values[1:], start=2):  # Skip header
-                    if len(row) > 7 and '❌' in str(row[7]):  # Status is now column H (index 7)
-                        self.sheet.format(f'A{idx}:I{idx}', {
+                    if len(row) > 6 and '❌' in str(row[6]):  # Status is column G (index 6)
+                        self.sheet.format(f'A{idx}:H{idx}', {
                             'backgroundColor': {'red': 1.0, 'green': 0.9, 'blue': 0.9},
                             'textFormat': {'strikethrough': True}
                         })
