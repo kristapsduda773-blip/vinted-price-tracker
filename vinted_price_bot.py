@@ -447,6 +447,7 @@ class VintedPriceBot:
                                 item_id = str(row[item_id_col])
                                 existing_dict[item_id] = {
                                     'Item ID': row[item_id_col] if len(row) > item_id_col else '',
+                                    'URL': row[headers.index('URL')] if 'URL' in headers and len(row) > headers.index('URL') else '',
                                     'Title': row[headers.index('Title')] if 'Title' in headers and len(row) > headers.index('Title') else '',
                                     'Current Price': row[headers.index('Current Price')] if 'Current Price' in headers and len(row) > headers.index('Current Price') else 0,
                                     'New Price': row[headers.index('New Price')] if 'New Price' in headers and len(row) > headers.index('New Price') else 0,
@@ -499,7 +500,7 @@ class VintedPriceBot:
             logger.info("ℹ️  No new or removed items")
         
         # Prepare updated data
-        updated_rows = [['Item ID', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
+        updated_rows = [['Item ID', 'URL', 'Title', 'Current Price', 'New Price', 'Price Change %', 'Floor Price', 'Status', 'Last Updated']]
         
         # Add current items from Vinted (active items)
         for item in items:
@@ -555,6 +556,7 @@ class VintedPriceBot:
             
             updated_rows.append([
                 item_id,
+                item.get('url', ''),  # Add URL column
                 item['title'],
                 current_price,
                 new_price,
@@ -570,6 +572,7 @@ class VintedPriceBot:
                 old_data = existing_dict[item_id]
                 updated_rows.append([
                     item_id,
+                    old_data.get('URL', ''),  # Keep URL if it exists
                     old_data.get('Title', 'Unknown'),
                     old_data.get('Current Price', 0),
                     old_data.get('New Price', 0),
@@ -581,26 +584,40 @@ class VintedPriceBot:
         
         # Update entire sheet
         self.sheet.clear()
-        self.sheet.update('A1:H' + str(len(updated_rows)), updated_rows)
+        self.sheet.update('A1:I' + str(len(updated_rows)), updated_rows)
         
         # Format the sheet
         try:
-            # Bold header
-            self.sheet.format('A1:H1', {
+            # Bold header with gray background
+            self.sheet.format('A1:I1', {
                 'textFormat': {'bold': True},
                 'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
             })
             
-            # Color sold/removed items red
-            if removed_item_ids:
-                # Find rows with sold/removed status and color them
-                all_values = self.sheet.get_all_values()
-                for idx, row in enumerate(all_values[1:], start=2):  # Skip header
-                    if len(row) > 6 and '❌' in str(row[6]):  # Status is column G (index 6)
-                        self.sheet.format(f'A{idx}:H{idx}', {
-                            'backgroundColor': {'red': 1.0, 'green': 0.9, 'blue': 0.9},
-                            'textFormat': {'strikethrough': True}
-                        })
+            # Alternating row colors (white and light gray) for better readability
+            for row_idx in range(2, len(updated_rows) + 1):
+                # Even rows (2, 4, 6...) = white, Odd rows (3, 5, 7...) = light gray
+                if row_idx % 2 == 0:
+                    # White background (default)
+                    bg_color = {'red': 1.0, 'green': 1.0, 'blue': 1.0}
+                else:
+                    # Light gray background
+                    bg_color = {'red': 0.95, 'green': 0.95, 'blue': 0.95}
+                
+                # Check if it's a sold/removed item
+                row_data = updated_rows[row_idx - 1] if row_idx - 1 < len(updated_rows) else []
+                if len(row_data) > 7 and '❌' in str(row_data[7]):  # Status column is now index 7
+                    # Red background for sold items
+                    bg_color = {'red': 1.0, 'green': 0.9, 'blue': 0.9}
+                    self.sheet.format(f'A{row_idx}:I{row_idx}', {
+                        'backgroundColor': bg_color,
+                        'textFormat': {'strikethrough': True}
+                    })
+                else:
+                    # Normal alternating colors
+                    self.sheet.format(f'A{row_idx}:I{row_idx}', {
+                        'backgroundColor': bg_color
+                    })
         except Exception as e:
             logger.warning(f"Could not format sheet: {e}")
         
@@ -630,48 +647,43 @@ class VintedPriceBot:
             self.driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(2)
             
-            # Click edit button - using exact selector from Vinted
-            logger.info("Looking for edit button...")
+            # Click "Edit listing" button - find by span text
+            logger.info("Looking for 'Edit listing' button...")
             edit_button = WebDriverWait(self.driver, 15).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='item-edit-button']"))
+                EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Edit listing')]"))
             )
             # Scroll button into view
             self.driver.execute_script("arguments[0].scrollIntoView(true);", edit_button)
             time.sleep(1)
-            logger.info("Edit button found, clicking...")
+            logger.info("Edit listing button found, clicking...")
             edit_button.click()
-            time.sleep(4)  # Wait for edit page to load
+            time.sleep(4)  # Wait for edit form to load
             
-            # Find price input - using exact selector from Vinted
+            # Find price input - using exact ID and data-testid
             logger.info("Looking for price input...")
             price_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='price-input--input']"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input#price[data-testid='price-input--input']"))
             )
-            logger.info(f"Price input found with current value: {price_input.get_attribute('value')}")
+            current_value = price_input.get_attribute('value')
+            logger.info(f"Price input found with current value: {current_value}")
             
-            # Clear and enter new price
+            # Clear and enter new price (remove € symbol if present)
             price_input.clear()
             time.sleep(0.5)
             
-            # Format price as Vinted expects (e.g., €13.00)
+            # Format price as Vinted expects (just the number, e.g., "24.50")
             new_price_str = f"{item['new_price']:.2f}"
             price_input.send_keys(new_price_str)
             logger.info(f"Entered new price: €{new_price_str}")
             time.sleep(1)
             
-            # Submit changes - look for save/submit button
-            try:
-                save_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                logger.info("Save button found, clicking...")
-                save_button.click()
-            except:
-                # Alternative: look for button with text
-                buttons = self.driver.find_elements(By.TAG_NAME, "button")
-                for button in buttons:
-                    if 'save' in button.text.lower() or 'submit' in button.text.lower() or 'saglabāt' in button.text.lower():
-                        logger.info(f"Found button with text: {button.text}")
-                        button.click()
-                        break
+            # Click Save button - using exact data-testid
+            logger.info("Looking for Save button...")
+            save_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='upload-form-save-button']"))
+            )
+            save_button.click()
+            logger.info("Save button clicked")
             
             time.sleep(3)
             
