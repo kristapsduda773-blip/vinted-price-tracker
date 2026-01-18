@@ -233,6 +233,29 @@ class VintedPriceBot:
             
             # STEP 2: Click "Vai piesakieties, izmantojot e-pasta adrese" (Or sign in using email address)
             logger.info("STEP 2: Looking for 'e-pasta adrese' button...")
+            
+            # First, debug: List all visible buttons/links to see what's available
+            try:
+                all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                all_links = self.driver.find_elements(By.TAG_NAME, "a")
+                logger.info(f"Found {len(all_buttons)} buttons and {len(all_links)} links on page")
+                
+                visible_buttons = [b for b in all_buttons if b.is_displayed()]
+                visible_links = [l for l in all_links if l.is_displayed()]
+                
+                logger.info(f"Visible buttons ({len(visible_buttons)}):")
+                for idx, btn in enumerate(visible_buttons[:10]):
+                    logger.info(f"  Button {idx+1}: text='{btn.text}', class='{btn.get_attribute('class')}'")
+                
+                logger.info(f"Visible links ({len(visible_links)}):")
+                for idx, link in enumerate(visible_links[:10]):
+                    text = link.text.strip()
+                    href = link.get_attribute('href')
+                    if text or 'e-pasta' in (href or '').lower():
+                        logger.info(f"  Link {idx+1}: text='{text}', href='{href}'")
+            except Exception as e:
+                logger.warning(f"Could not list buttons/links: {e}")
+            
             try:
                 email_option_selectors = [
                     (By.PARTIAL_LINK_TEXT, "e-pasta adrese"),  # "email address" in Latvian
@@ -243,11 +266,15 @@ class VintedPriceBot:
                     (By.XPATH, "//a[contains(., 'piesakieties')]"),
                     (By.XPATH, "//button[contains(., 'Vai piesakieties')]"),  # Full text
                     (By.XPATH, "//a[contains(., 'Vai piesakieties')]"),
+                    (By.XPATH, "//button[contains(., 'izmantojot')]"),  # "using" in Latvian
+                    (By.XPATH, "//a[contains(., 'izmantojot')]"),
                     (By.CSS_SELECTOR, "button[class*='email']"),
                     (By.CSS_SELECTOR, "a[class*='email']"),
                     # Try finding any button/link that's visible after clicking Pieteikties
                     (By.XPATH, "//div[@class='auth__container']//button"),
                     (By.XPATH, "//div[@class='auth__container']//a"),
+                    (By.XPATH, "//div[contains(@class, 'auth')]//button"),
+                    (By.XPATH, "//div[contains(@class, 'auth')]//a"),
                 ]
                 
                 email_option_button = None
@@ -258,7 +285,7 @@ class VintedPriceBot:
                             if elem.is_displayed():
                                 text = elem.text.lower()
                                 # Look for "e-pasta adrese" or "piesakieties" text
-                                if 'e-pasta' in text or 'piesakieties' in text or 'vai piesakieties' in text:
+                                if 'e-pasta' in text or 'piesakieties' in text or 'vai piesakieties' in text or 'izmantojot' in text:
                                     email_option_button = elem
                                     logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
                                     break
@@ -269,6 +296,9 @@ class VintedPriceBot:
                 
                 if email_option_button:
                     try:
+                        # Scroll into view first
+                        self.driver.execute_script("arguments[0].scrollIntoView(true);", email_option_button)
+                        time.sleep(0.5)
                         email_option_button.click()
                         logger.info("✓ Clicked 'e-pasta adrese' button")
                     except:
