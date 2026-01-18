@@ -73,8 +73,9 @@ class VintedPriceBot:
             # Fix for webdriver-manager bug - find the actual chromedriver binary
             actual_driver = None
             
-            # Check if it's directly the chromedriver file
-            if os.path.isfile(driver_path) and (driver_path.endswith('chromedriver') or driver_path.endswith('chromedriver.exe')):
+            # Check if it's directly the chromedriver file (exact filename match)
+            filename = os.path.basename(driver_path)
+            if os.path.isfile(driver_path) and (filename == 'chromedriver' or filename == 'chromedriver.exe'):
                 actual_driver = driver_path
             else:
                 # Navigate up to find the base directory
