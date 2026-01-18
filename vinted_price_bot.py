@@ -1,4 +1,4 @@
-v"""
+"""
 Vinted Price Tracker Bot
 Automatically updates Vinted item prices based on Google Sheets configuration
 """
@@ -738,4 +738,5 @@ class VintedPriceBot:
 if __name__ == "__main__":
     bot = VintedPriceBot()
     bot.run()
+
 
