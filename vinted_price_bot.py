@@ -195,174 +195,29 @@ class VintedPriceBot:
             except:
                 logger.info("No cookie banner found")
             
-            # STEP 1: Click "Pieteikties" - it's a SPAN element, not a link!
-            logger.info("STEP 1: Looking for 'Pieteikties' span (Already have account?)...")
-            try:
-                login_mode_selectors = [
-                    (By.XPATH, "//span[contains(text(), 'Pieteikties')]"),  # Span with text
-                    (By.XPATH, "//span[@class='web_ui__Text__underline' and contains(text(), 'Pieteikties')]"),  # With underline class
-                    (By.XPATH, "//span[contains(@class, 'underline') and contains(text(), 'Pieteikties')]"),
-                    (By.PARTIAL_LINK_TEXT, "Pieteikties"),  # Fallback: try as link
-                    (By.XPATH, "//a[contains(text(), 'Pieteikties')]"),  # Fallback: try as link
-                ]
-                
-                login_link = None
-                for by, selector in login_mode_selectors:
-                    try:
-                        login_link = WebDriverWait(self.driver, 5).until(
-                            EC.element_to_be_clickable((by, selector))
-                        )
-                        logger.info(f"Found 'Pieteikties' element with: {by}={selector}")
-                        break
-                    except:
-                        continue
-                
-                if login_link:
-                    try:
-                        login_link.click()
-                        logger.info("✓ Clicked 'Pieteikties' span")
-                    except:
-                        self.driver.execute_script("arguments[0].click();", login_link)
-                        logger.info("✓ Clicked 'Pieteikties' span via JavaScript")
-                    time.sleep(4)  # Wait longer for the page to update and show email option
-                else:
-                    logger.warning("No 'Pieteikties' element found")
-                    
-            except Exception as e:
-                logger.warning(f"Error clicking 'Pieteikties': {e}")
+            # STEP 1: Click "Pieteikties" span
+            logger.info("STEP 1: Clicking 'Pieteikties'...")
+            login_link = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Pieteikties')]"))
+            )
+            self.driver.execute_script("arguments[0].click();", login_link)
+            logger.info("✓ Clicked 'Pieteikties'")
+            time.sleep(4)
             
-            # STEP 2: Click "e-pasta adrese" (email address) - it's a SPAN element, not a link/button!
-            logger.info("STEP 2: Looking for 'e-pasta adrese' span element...")
+            # STEP 2: Click "e-pasta adrese" span
+            logger.info("STEP 2: Clicking 'e-pasta adrese'...")
+            email_option_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'e-pasta')]"))
+            )
+            self.driver.execute_script("arguments[0].click();", email_option_button)
+            logger.info("✓ Clicked 'e-pasta adrese'")
+            time.sleep(3)
             
-            # Wait a moment for the page to update after clicking Pieteikties
-            time.sleep(2)
-            
-            # Find the span element with "e-pasta adrese" text
-            email_option_button = None
-            try:
-                # Try to find span with exact text
-                email_option_button = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'e-pasta adrese')]"))
-                )
-                logger.info(f"✓ Found 'e-pasta adrese' span: '{email_option_button.text}'")
-            except:
-                try:
-                    # Try partial match
-                    email_option_button = WebDriverWait(self.driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'e-pasta')]"))
-                    )
-                    logger.info(f"✓ Found 'e-pasta' span: '{email_option_button.text}'")
-                except:
-                    # Try finding by class (web_ui__Text__underline)
-                    try:
-                        all_spans = self.driver.find_elements(By.TAG_NAME, "span")
-                        for span in all_spans:
-                            if span.is_displayed():
-                                text = span.text.strip().lower()
-                                if 'e-pasta adrese' in text or ('e-pasta' in text and 'adrese' in text):
-                                    email_option_button = span
-                                    logger.info(f"✓ Found email option span: '{span.text}'")
-                                    break
-                    except Exception as e:
-                        logger.warning(f"Could not search spans: {e}")
-            
-            try:
-                if not email_option_button:
-                    # Try other selectors as fallback
-                    email_option_selectors = [
-                        (By.XPATH, "//span[@class='web_ui__Text__underline' and contains(text(), 'e-pasta')]"),
-                        (By.XPATH, "//span[contains(@class, 'underline') and contains(text(), 'e-pasta')]"),
-                        (By.XPATH, "//span[contains(text(), 'e-pasta')]"),
-                    ]
-                    
-                    for by, selector in email_option_selectors:
-                        try:
-                            elements = self.driver.find_elements(by, selector)
-                            for elem in elements:
-                                if elem.is_displayed():
-                                    text = elem.text.lower()
-                                    # Look for "e-pasta" but EXCLUDE social login
-                                    if 'e-pasta' in text and 'apple' not in text and 'facebook' not in text and 'google' not in text:
-                                        email_option_button = elem
-                                        logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
-                                        break
-                            if email_option_button:
-                                break
-                        except:
-                            continue
-                
-                if email_option_button:
-                    try:
-                        # Scroll into view first
-                        self.driver.execute_script("arguments[0].scrollIntoView(true);", email_option_button)
-                        time.sleep(0.5)
-                        email_option_button.click()
-                        logger.info("✓ Clicked 'e-pasta adrese' button")
-                    except:
-                        self.driver.execute_script("arguments[0].click();", email_option_button)
-                        logger.info("✓ Clicked 'e-pasta adrese' button via JavaScript")
-                    time.sleep(3)  # Wait for email/password form to appear
-                else:
-                    logger.warning("No 'e-pasta adrese' button found - checking if form is already visible...")
-                    # Maybe the form is already visible? Check for #username
-                    try:
-                        username_check = self.driver.find_element(By.ID, "username")
-                        if username_check.is_displayed():
-                            logger.info("✓ Login form already visible (username field found)")
-                    except:
-                        pass
-                    time.sleep(2)
-                    
-            except Exception as e:
-                logger.warning(f"Error clicking email option: {e}")
-                time.sleep(2)
-            
-            # Wait for the login form to be fully visible
-            logger.info("Waiting for login form to be interactive...")
-            time.sleep(2)
-            
-            # Find and fill email input - using exact selectors from user
-            logger.info("Looking for email input in login form...")
-            email_input = None
-            email_selectors = [
-                (By.ID, "username"),  # Exact ID from user
-                (By.XPATH, "//*[@id='username']"),  # Exact XPath from user
-                (By.CSS_SELECTOR, "#username"),  # CSS selector
-                (By.XPATH, "//div[@class='auth__container']//form//div[2]//div//input"),  # Based on user's CSS path
-                (By.NAME, "username"),
-                (By.NAME, "login"),
-                (By.CSS_SELECTOR, "input[name='login[login]']"),
-                (By.CSS_SELECTOR, "input[autocomplete='username']"),
-                (By.CSS_SELECTOR, "input[placeholder*='E-pasta']"),  # Email placeholder in Latvian
-                (By.CSS_SELECTOR, "input[placeholder*='e-pasta']"),
-                (By.XPATH, "//form//input[@type='text' and not(@name='search_text')]"),  # Text input but not search
-                (By.XPATH, "//form//input[@type='email']"),
-                (By.CSS_SELECTOR, "form input[type='text']:not([name='search_text'])"),  # Form text input, not search
-            ]
-            
-            for by, selector in email_selectors:
-                try:
-                    logger.info(f"  Trying: {by}={selector}")
-                    email_input = WebDriverWait(self.driver, 5).until(
-                        EC.presence_of_element_located((by, selector))
-                    )
-                    # Verify it's not the search box
-                    input_name = email_input.get_attribute('name')
-                    input_id = email_input.get_attribute('id')
-                    placeholder = email_input.get_attribute('placeholder') or ''
-                    
-                    if input_name == 'search_text' or 'Meklēt' in placeholder:
-                        logger.warning(f"  Found search box instead, skipping...")
-                        email_input = None
-                        continue
-                    
-                    logger.info(f"✓ Found email input: name={input_name}, id={input_id}, placeholder={placeholder}")
-                    break
-                except TimeoutException:
-                    continue
-                except Exception as e:
-                    logger.debug(f"  Failed with error: {e}")
-                    continue
+            # STEP 3: Fill email and password
+            logger.info("STEP 3: Filling login form...")
+            email_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='E-pasta'], input[id='username'], input[id='email']"))
+            )
             
             if not email_input:
                 # Debug: List all input elements on the page
@@ -384,126 +239,18 @@ class VintedPriceBot:
                 logger.error("Page source saved to /tmp/vinted_login_page.html")
                 raise Exception("Email input not found")
             
-            # Scroll element into view and make sure it's interactable
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", email_input)
+            email_input.clear()
+            email_input.send_keys(self.vinted_email)
+            logger.info("✓ Email entered")
             time.sleep(1)
             
-            # Try to click/interact with the element
-            try:
-                # Use JavaScript click if normal click fails
-                try:
-                    email_input.click()
-                except:
-                    self.driver.execute_script("arguments[0].click();", email_input)
-                    
-                email_input.clear()
-                email_input.send_keys(self.vinted_email)
-                logger.info("Email entered")
-            except Exception as e:
-                # Last resort: use JavaScript to set value
-                logger.warning(f"Normal input failed, using JavaScript: {e}")
-                self.driver.execute_script(f"arguments[0].value = '{self.vinted_email}';", email_input)
-                # Trigger input event so form knows the value changed
-                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", email_input)
-                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", email_input)
-                logger.info("Email entered via JavaScript")
-            
-            # Wait for both email and password fields to be visible (they appear together)
-            logger.info("Waiting for email and password form to appear...")
-            try:
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
-                )
-                logger.info("✓ Password field detected - form is ready")
-            except:
-                logger.warning("Password field not found yet, continuing anyway...")
-            
+            password_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.ID, "password"))
+            )
+            password_input.clear()
+            password_input.send_keys(self.vinted_password)
+            logger.info("✓ Password entered")
             time.sleep(1)
-            
-            # Find and fill password input - using exact selectors from user
-            logger.info("Looking for password input...")
-            password_input = None
-            password_selectors = [
-                (By.ID, "password"),  # Exact ID from user
-                (By.XPATH, "//*[@id='password']"),  # Exact XPath from user
-                (By.CSS_SELECTOR, "#password"),  # CSS selector
-                (By.CSS_SELECTOR, "input[type='password'][name='password']"),  # With name attribute
-                (By.NAME, "password"),
-                (By.CSS_SELECTOR, "input[type='password']"),  # Generic password input
-                (By.XPATH, "//input[@type='password']"),
-                (By.CSS_SELECTOR, "input[name='login[password]']"),
-                (By.CSS_SELECTOR, "input[autocomplete='current-password']"),
-                (By.XPATH, "//form//div[3]//input[@type='password']"),
-            ]
-            
-            for by, selector in password_selectors:
-                try:
-                    logger.info(f"  Trying: {by}={selector}")
-                    password_input = WebDriverWait(self.driver, 5).until(
-                        EC.presence_of_element_located((by, selector))
-                    )
-                    logger.info(f"✓ Found password input with: {by}={selector}")
-                    break
-                except TimeoutException:
-                    continue
-                except Exception as e:
-                    logger.debug(f"  Failed with error: {e}")
-                    continue
-            
-            if not password_input:
-                # Debug: List ALL inputs on the page to understand what's available
-                try:
-                    all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                    logger.error(f"Could not find password input. Found {len(all_inputs)} total input fields:")
-                    for idx, inp in enumerate(all_inputs[:15]):  # Show first 15
-                        is_displayed = inp.is_displayed()
-                        input_type = inp.get_attribute('type')
-                        input_name = inp.get_attribute('name')
-                        input_id = inp.get_attribute('id')
-                        input_placeholder = inp.get_attribute('placeholder')
-                        logger.error(f"  Input {idx+1}: type={input_type}, displayed={is_displayed}, name={input_name}, id={input_id}, placeholder={input_placeholder}")
-                    
-                    # Also check for password inputs specifically
-                    all_password_inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
-                    logger.error(f"Password fields found: {len(all_password_inputs)}")
-                except Exception as e:
-                    logger.error(f"Could not list inputs: {e}")
-                
-                # Save page source
-                try:
-                    with open('/tmp/vinted_no_password.html', 'w', encoding='utf-8') as f:
-                        f.write(self.driver.page_source)
-                    logger.error("Page source saved to /tmp/vinted_no_password.html")
-                except:
-                    pass
-                    
-                raise Exception("Password input not found")
-            
-            # Scroll element into view and make sure it's interactable
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", password_input)
-            time.sleep(1)
-            
-            # Try to click/interact with the element
-            try:
-                # Use JavaScript click if normal click fails
-                try:
-                    password_input.click()
-                except:
-                    self.driver.execute_script("arguments[0].click();", password_input)
-                    
-                password_input.clear()
-                password_input.send_keys(self.vinted_password)
-                logger.info("Password entered")
-            except Exception as e:
-                # Last resort: use JavaScript to set value
-                logger.warning(f"Normal input failed, using JavaScript: {e}")
-                self.driver.execute_script(f"arguments[0].value = '{self.vinted_password}';", password_input)
-                # Trigger input event so form knows the value changed
-                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", password_input)
-                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", password_input)
-                logger.info("Password entered via JavaScript")
-            
-            time.sleep(2)
             
             # Submit login form
             submit_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
@@ -877,156 +624,58 @@ class VintedPriceBot:
         try:
             # Navigate to item page
             self.driver.get(item['url'])
-            time.sleep(5)  # Wait longer for page to fully load
+            time.sleep(5)  # Wait for page to fully load
             
             # Scroll to top to ensure edit button is visible
             self.driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(1)
+            time.sleep(2)
             
             # Click edit button - using exact selector from Vinted
             logger.info("Looking for edit button...")
-            edit_button = None
-            edit_selectors = [
-                (By.CSS_SELECTOR, "[data-testid='item-edit-button']"),
-                (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
-                (By.XPATH, "//button[@data-testid='item-edit-button']"),
-                (By.XPATH, "//button[contains(text(), 'Edit listing')]"),
-                (By.XPATH, "//button[contains(text(), 'Rediģēt')]"),  # Latvian for Edit
-            ]
-            
-            for by, selector in edit_selectors:
-                try:
-                    edit_button = WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((by, selector))
-                    )
-                    logger.info(f"✓ Edit button found with: {by}={selector}")
-                    break
-                except:
-                    continue
-            
-            if not edit_button:
-                # Debug: List all buttons on the page
-                try:
-                    all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
-                    visible_buttons = [b for b in all_buttons if b.is_displayed()]
-                    logger.error(f"Could not find edit button. Found {len(visible_buttons)} visible buttons:")
-                    for idx, btn in enumerate(visible_buttons[:10]):
-                        testid = btn.get_attribute('data-testid')
-                        logger.error(f"  Button {idx+1}: text='{btn.text}', data-testid='{testid}'")
-                except:
-                    pass
-                raise Exception("Edit button not found")
-            
-            # Scroll edit button into view
+            edit_button = WebDriverWait(self.driver, 15).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='item-edit-button']"))
+            )
+            # Scroll button into view
             self.driver.execute_script("arguments[0].scrollIntoView(true);", edit_button)
-            time.sleep(0.5)
-            
-            # Click edit button
-            try:
-                edit_button.click()
-                logger.info("✓ Clicked edit button")
-            except:
-                self.driver.execute_script("arguments[0].click();", edit_button)
-                logger.info("✓ Clicked edit button via JavaScript")
-            
+            time.sleep(1)
+            logger.info("Edit button found, clicking...")
+            edit_button.click()
             time.sleep(4)  # Wait for edit page to load
             
             # Find price input - using exact selector from Vinted
             logger.info("Looking for price input...")
-            price_input = None
-            price_selectors = [
-                (By.CSS_SELECTOR, "[data-testid='price-input--input']"),
-                (By.CSS_SELECTOR, "input[data-testid='price-input--input']"),
-                (By.XPATH, "//input[@data-testid='price-input--input']"),
-                (By.ID, "price"),
-                (By.NAME, "price"),
-            ]
-            
-            for by, selector in price_selectors:
-                try:
-                    price_input = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((by, selector))
-                    )
-                    logger.info(f"✓ Price input found with: {by}={selector}")
-                    break
-                except:
-                    continue
-            
-            if not price_input:
-                raise Exception("Price input not found")
-            
-            logger.info(f"Price input current value: {price_input.get_attribute('value')}")
-            
-            # Scroll price input into view
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", price_input)
-            time.sleep(0.5)
+            price_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='price-input--input']"))
+            )
+            logger.info(f"Price input found with current value: {price_input.get_attribute('value')}")
             
             # Clear and enter new price
-            try:
-                price_input.clear()
-            except:
-                self.driver.execute_script("arguments[0].value = '';", price_input)
-            
+            price_input.clear()
             time.sleep(0.5)
             
-            # Format price as Vinted expects (e.g., 24.50)
+            # Format price as Vinted expects (e.g., €13.00)
             new_price_str = f"{item['new_price']:.2f}"
-            try:
-                price_input.send_keys(new_price_str)
-                logger.info(f"✓ Entered new price: €{new_price_str}")
-            except:
-                self.driver.execute_script(f"arguments[0].value = '{new_price_str}';", price_input)
-                # Trigger input event
-                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", price_input)
-                logger.info(f"✓ Entered new price via JavaScript: €{new_price_str}")
-            
+            price_input.send_keys(new_price_str)
+            logger.info(f"Entered new price: €{new_price_str}")
             time.sleep(1)
             
             # Submit changes - look for save/submit button
-            logger.info("Looking for save button...")
-            save_button = None
-            save_selectors = [
-                (By.CSS_SELECTOR, "button[type='submit'][data-testid='save-button']"),
-                (By.CSS_SELECTOR, "button[type='submit']"),
-                (By.XPATH, "//button[@type='submit']"),
-                (By.XPATH, "//button[contains(text(), 'Save')]"),
-                (By.XPATH, "//button[contains(text(), 'Saglabāt')]"),  # Latvian for Save
-            ]
-            
-            for by, selector in save_selectors:
-                try:
-                    save_button = WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable((by, selector))
-                    )
-                    logger.info(f"✓ Save button found with: {by}={selector}")
-                    break
-                except:
-                    continue
-            
-            if save_button:
-                try:
-                    save_button.click()
-                    logger.info("✓ Clicked save button")
-                except:
-                    self.driver.execute_script("arguments[0].click();", save_button)
-                    logger.info("✓ Clicked save button via JavaScript")
-            else:
-                # Fallback: look for button with text
+            try:
+                save_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                logger.info("Save button found, clicking...")
+                save_button.click()
+            except:
+                # Alternative: look for button with text
                 buttons = self.driver.find_elements(By.TAG_NAME, "button")
                 for button in buttons:
-                    if button.is_displayed():
-                        text = button.text.lower()
-                        if 'save' in text or 'submit' in text or 'saglabāt' in text:
-                            logger.info(f"Found save button with text: {button.text}")
-                            try:
-                                button.click()
-                            except:
-                                self.driver.execute_script("arguments[0].click();", button)
-                            break
+                    if 'save' in button.text.lower() or 'submit' in button.text.lower() or 'saglabāt' in button.text.lower():
+                        logger.info(f"Found button with text: {button.text}")
+                        button.click()
+                        break
             
             time.sleep(3)
             
-            logger.info(f"✓ Price updated: €{item['price']:.2f} → €{item['new_price']:.2f} ({item['price_change_percent']:+.1f}%)")
+            logger.info(f"✓ Price updated: €{item['price']:.2f} → €{item['new_price']:.2f} ({item['price_change_percent']:.1f}%)")
             
             return True
             
@@ -1103,7 +752,7 @@ class VintedPriceBot:
                     logger.info(f"🧪 Testing price update on LAST item: {last_item['title']}")
                     logger.info(f"   Current price: €{last_item['price']}")
                     logger.info(f"   New price: €{last_item['new_price']}")
-                    logger.info(f"   Change: {last_item['price_change_percent']:+.1f}%")
+                    logger.info(f"   Change: {last_item['price_change_percent']:.1f}%")
                     
                     if self.update_item_price(last_item):
                         success_count += 1
