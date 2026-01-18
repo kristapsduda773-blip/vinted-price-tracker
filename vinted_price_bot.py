@@ -224,87 +224,87 @@ class VintedPriceBot:
                     except:
                         self.driver.execute_script("arguments[0].click();", login_link)
                         logger.info("✓ Clicked 'Pieteikties' link via JavaScript")
-                    time.sleep(2)
+                    time.sleep(4)  # Wait longer for the page to update and show email option
                 else:
                     logger.warning("No 'Pieteikties' link found")
                     
             except Exception as e:
                 logger.warning(f"Error clicking 'Pieteikties' link: {e}")
             
-            # STEP 2: Click "Vai piesakieties, izmantojot e-pasta adrese" (Or sign in using email address)
-            logger.info("STEP 2: Looking for 'e-pasta adrese' button...")
+            # STEP 2: Click "e-pasta adrese" (email address) link/button
+            logger.info("STEP 2: Looking for 'e-pasta adrese' link/button...")
             
-            # First, debug: List all visible buttons/links to see what's available
-            try:
-                all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
-                all_links = self.driver.find_elements(By.TAG_NAME, "a")
-                logger.info(f"Found {len(all_buttons)} buttons and {len(all_links)} links on page")
-                
-                visible_buttons = [b for b in all_buttons if b.is_displayed()]
-                visible_links = [l for l in all_links if l.is_displayed()]
-                
-                logger.info(f"Visible buttons ({len(visible_buttons)}):")
-                for idx, btn in enumerate(visible_buttons[:10]):
-                    logger.info(f"  Button {idx+1}: text='{btn.text}', class='{btn.get_attribute('class')}'")
-                
-                logger.info(f"Visible links ({len(visible_links)}):")
-                for idx, link in enumerate(visible_links):
-                    text = link.text.strip()
-                    href = link.get_attribute('href')
-                    # Show all links, especially ones with e-pasta or email-related text
-                    if text or 'e-pasta' in (href or '').lower() or 'e-pasta' in text.lower() or 'email' in text.lower() or 'piesakieties' in text.lower() or 'reģistrējieties' in text.lower():
-                        logger.info(f"  Link {idx+1}: text='{text}', href='{href}'")
-            except Exception as e:
-                logger.warning(f"Could not list buttons/links: {e}")
+            # Wait a moment for the page to update after clicking Pieteikties
+            time.sleep(2)
             
+            # First, try to find it directly with exact text match
+            email_option_button = None
             try:
-                email_option_selectors = [
-                    (By.PARTIAL_LINK_TEXT, "e-pasta adrese"),  # "email address" in Latvian
-                    (By.PARTIAL_LINK_TEXT, "e-pasta"),
-                    (By.XPATH, "//button[contains(text(), 'e-pasta adrese')]"),
-                    (By.XPATH, "//a[contains(text(), 'e-pasta adrese')]"),
-                    (By.XPATH, "//button[contains(., 'piesakieties')]"),  # "sign in" in Latvian
-                    (By.XPATH, "//a[contains(., 'piesakieties')]"),
-                    (By.XPATH, "//button[contains(., 'Vai piesakieties')]"),  # Full text
-                    (By.XPATH, "//a[contains(., 'Vai piesakieties')]"),
-                    (By.XPATH, "//button[contains(., 'izmantojot')]"),  # "using" in Latvian
-                    (By.XPATH, "//a[contains(., 'izmantojot')]"),
-                    (By.CSS_SELECTOR, "button[class*='email']"),
-                    (By.CSS_SELECTOR, "a[class*='email']"),
-                    # Try finding any button/link that's visible after clicking Pieteikties
-                    (By.XPATH, "//div[@class='auth__container']//button"),
-                    (By.XPATH, "//div[@class='auth__container']//a"),
-                    (By.XPATH, "//div[contains(@class, 'auth')]//button"),
-                    (By.XPATH, "//div[contains(@class, 'auth')]//a"),
-                ]
-                
-                email_option_button = None
-                for by, selector in email_option_selectors:
+                # Try exact text match first
+                email_option_button = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "e-pasta adrese"))
+                )
+                logger.info(f"✓ Found 'e-pasta adrese' link: '{email_option_button.text}'")
+            except:
+                try:
+                    # Try as button
+                    email_option_button = WebDriverWait(self.driver, 3).until(
+                        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'e-pasta adrese')]"))
+                    )
+                    logger.info(f"✓ Found 'e-pasta adrese' button: '{email_option_button.text}'")
+                except:
+                    # Debug: List all visible buttons/links to see what's available
                     try:
-                        elements = self.driver.find_elements(by, selector)
-                        for elem in elements:
-                            if elem.is_displayed():
-                                text = elem.text.lower()
-                                # Look for "e-pasta" but EXCLUDE social login buttons (Apple, Facebook, Google)
-                                if ('e-pasta' in text or 'piesakieties' in text or 'vai piesakieties' in text) and \
-                                   'apple' not in text and 'facebook' not in text and 'google' not in text:
-                                    email_option_button = elem
-                                    logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
-                                    break
-                        if email_option_button:
-                            break
-                    except:
-                        continue
-                
-                # If not found in buttons, try links specifically
+                        all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                        all_links = self.driver.find_elements(By.TAG_NAME, "a")
+                        logger.info(f"Found {len(all_buttons)} buttons and {len(all_links)} links on page")
+                        
+                        visible_buttons = [b for b in all_buttons if b.is_displayed()]
+                        visible_links = [l for l in all_links if l.is_displayed()]
+                        
+                        logger.info(f"Visible links ({len(visible_links)}):")
+                        for idx, link in enumerate(visible_links):
+                            text = link.text.strip()
+                            href = link.get_attribute('href')
+                            # Show all links, especially ones with e-pasta or email-related text
+                            if text or 'e-pasta' in (href or '').lower() or 'e-pasta' in text.lower() or 'email' in text.lower() or 'piesakieties' in text.lower() or 'reģistrējieties' in text.lower():
+                                logger.info(f"  Link {idx+1}: text='{text}', href='{href}'")
+                        
+                        # Search through all links for "e-pasta adrese"
+                        for link in visible_links:
+                            text = link.text.lower()
+                            if 'e-pasta adrese' in text or ('e-pasta' in text and 'adrese' in text):
+                                email_option_button = link
+                                logger.info(f"✓ Found email option in links: '{link.text}'")
+                                break
+                    except Exception as e:
+                        logger.warning(f"Could not list buttons/links: {e}")
+            
+            try:
                 if not email_option_button:
-                    logger.info("Trying to find email option in links...")
-                    for link in visible_links:
-                        text = link.text.lower()
-                        if 'e-pasta' in text and 'apple' not in text and 'facebook' not in text and 'google' not in text:
-                            email_option_button = link
-                            logger.info(f"Found email option in links: '{link.text}'")
-                            break
+                    # Try other selectors as fallback
+                    email_option_selectors = [
+                        (By.PARTIAL_LINK_TEXT, "e-pasta"),  # Partial match
+                        (By.XPATH, "//a[contains(text(), 'e-pasta')]"),
+                        (By.XPATH, "//button[contains(text(), 'e-pasta')]"),
+                        (By.XPATH, "//a[contains(., 'reģistrējieties') and contains(., 'e-pasta')]"),  # "register using email"
+                    ]
+                    
+                    for by, selector in email_option_selectors:
+                        try:
+                            elements = self.driver.find_elements(by, selector)
+                            for elem in elements:
+                                if elem.is_displayed():
+                                    text = elem.text.lower()
+                                    # Look for "e-pasta" but EXCLUDE social login buttons
+                                    if 'e-pasta' in text and 'apple' not in text and 'facebook' not in text and 'google' not in text:
+                                        email_option_button = elem
+                                        logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
+                                        break
+                            if email_option_button:
+                                break
+                        except:
+                            continue
                 
                 if email_option_button:
                     try:
