@@ -318,22 +318,26 @@ class VintedPriceBot:
             
             logger.info(f"Scrolled {scroll_attempts} times to load items")
             
-            # Find all item containers - each item is in a container with the link and price
-            item_containers = self.driver.find_elements(By.CSS_SELECTOR, ".new-item-box")
+            # Find all item links using data-testid (more reliable than class names)
+            item_links = self.driver.find_elements(By.CSS_SELECTOR, "[data-testid*='--overlay-link']")
             
-            logger.info(f"Found {len(item_containers)} item containers")
+            logger.info(f"Found {len(item_links)} item links")
             
-            for container in item_containers:
+            for link in item_links:
                 try:
-                    # Get the link element with item URL
-                    link = container.find_element(By.CSS_SELECTOR, "a.new-item-box__overlay")
+                    # Get item URL
                     item_url = link.get_attribute('href')
                     
                     if not item_url or '/items/' not in item_url:
                         continue
                     
-                    # Get item ID from URL (e.g., /items/7819896031)
-                    item_id = item_url.split('/items/')[-1].split('-')[0]
+                    # Get item ID from data-testid (format: "product-item-id-7819896031--overlay-link")
+                    testid = link.get_attribute('data-testid')
+                    if testid and 'product-item-id-' in testid:
+                        item_id = testid.replace('product-item-id-', '').split('--')[0]
+                    else:
+                        # Fallback: extract from URL
+                        item_id = item_url.split('/items/')[-1].split('-')[0]
                     
                     # Get title from the title attribute
                     title = link.get_attribute('title')
@@ -342,23 +346,16 @@ class VintedPriceBot:
                     # Get price using the exact data-testid pattern
                     price = 0.0
                     try:
-                        # Try to find price element with specific item ID
-                        price_element = container.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
+                        # Search the whole page for the price element with this item ID
+                        price_element = self.driver.find_element(By.CSS_SELECTOR, f"[data-testid='product-item-id-{item_id}--price-text']")
                         price_text = price_element.text.strip()
                         # Remove € symbol and parse (e.g., "€13.00" or "13.00")
                         price_text = price_text.replace('€', '').replace(',', '.').strip()
                         price = float(price_text)
-                        logger.debug(f"Parsed price for {item_id}: '{price_element.text}' -> €{price}")
+                        logger.debug(f"Found price for {item_id}: €{price}")
                     except Exception as e:
                         logger.warning(f"Could not find price for item {item_id}: {e}")
-                        # Try alternative: any price text element in this container
-                        try:
-                            price_element = container.find_element(By.CSS_SELECTOR, "[data-testid*='--price-text']")
-                            price_text = price_element.text.strip().replace('€', '').replace(',', '.').strip()
-                            price = float(price_text)
-                            logger.debug(f"Used fallback price selector: €{price}")
-                        except:
-                            price = 0.0
+                        price = 0.0
                     
                     # Ensure URL is absolute
                     if not item_url.startswith('http'):
@@ -374,7 +371,7 @@ class VintedPriceBot:
                     logger.info(f"Scraped: {clean_title} - €{price} (ID: {item_id})")
                     
                 except Exception as e:
-                    logger.warning(f"Failed to parse item container: {e}")
+                    logger.warning(f"Failed to parse item link: {e}")
                     continue
             
             logger.info(f"Successfully scraped {len(items)} items")
