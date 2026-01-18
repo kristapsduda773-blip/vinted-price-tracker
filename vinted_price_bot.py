@@ -195,12 +195,12 @@ class VintedPriceBot:
             except:
                 logger.info("No cookie banner found")
             
-            # First, look for "Already have an account? Login" link to switch to login mode
-            logger.info("Looking for 'Already have account? Login' link...")
+            # STEP 1: Click "Pieteikties" on "Vai jums jau ir konts?Pieteikties" (Already have account? Login)
+            logger.info("STEP 1: Looking for 'Pieteikties' link (Already have account?)...")
             try:
                 login_mode_selectors = [
-                    (By.LINK_TEXT, "Pieteikties"),  # "Login" in Latvian
-                    (By.PARTIAL_LINK_TEXT, "Pieteikties"),
+                    (By.PARTIAL_LINK_TEXT, "Pieteikties"),  # "Login" in Latvian
+                    (By.LINK_TEXT, "Pieteikties"),
                     (By.XPATH, "//a[contains(text(), 'Pieteikties')]"),
                     (By.XPATH, "//a[contains(., 'konts')]"),  # "account" in Latvian
                     (By.CSS_SELECTOR, "a[href*='login']"),
@@ -209,10 +209,10 @@ class VintedPriceBot:
                 login_link = None
                 for by, selector in login_mode_selectors:
                     try:
-                        login_link = WebDriverWait(self.driver, 3).until(
+                        login_link = WebDriverWait(self.driver, 5).until(
                             EC.element_to_be_clickable((by, selector))
                         )
-                        logger.info(f"Found 'Login' link with: {by}={selector}")
+                        logger.info(f"Found 'Pieteikties' link with: {by}={selector}")
                         break
                     except:
                         continue
@@ -220,47 +220,29 @@ class VintedPriceBot:
                 if login_link:
                     try:
                         login_link.click()
-                        logger.info("Clicked 'Login' link to switch to login mode")
+                        logger.info("✓ Clicked 'Pieteikties' link")
                     except:
                         self.driver.execute_script("arguments[0].click();", login_link)
-                        logger.info("Clicked 'Login' link via JavaScript")
-                    time.sleep(3)
-                    
-                    # Wait for login form to appear (might be in a modal or new section)
-                    try:
-                        WebDriverWait(self.driver, 10).until(
-                            EC.any_of(
-                                EC.presence_of_element_located((By.CSS_SELECTOR, "form input[type='text']:not([name='search_text'])")),
-                                EC.presence_of_element_located((By.ID, "username")),
-                                EC.presence_of_element_located((By.NAME, "username")),
-                                EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='E-pasta']")),
-                            )
-                        )
-                        logger.info("Login form detected")
-                    except:
-                        logger.warning("Login form might not have appeared, continuing anyway...")
+                        logger.info("✓ Clicked 'Pieteikties' link via JavaScript")
+                    time.sleep(2)
                 else:
-                    logger.info("No 'Login' link found, might already be in login mode")
+                    logger.warning("No 'Pieteikties' link found")
                     
             except Exception as e:
-                logger.warning(f"Error clicking login link: {e}")
+                logger.warning(f"Error clicking 'Pieteikties' link: {e}")
             
-            # Now look for "Login with Email" button or any button to reveal the email/password form
-            logger.info("Looking for 'Login with Email/Password' option...")
+            # STEP 2: Click "Vai piesakieties, izmantojot e-pasta adrese" (Or sign in using email address)
+            logger.info("STEP 2: Looking for 'e-pasta adrese' button...")
             try:
-                # Look for the email/password login option button
                 email_option_selectors = [
-                    (By.PARTIAL_LINK_TEXT, "e-pasta"),  # "email" in Latvian
-                    (By.PARTIAL_LINK_TEXT, "e-pasts"),
-                    (By.XPATH, "//button[contains(text(), 'e-pasta')]"),
-                    (By.XPATH, "//a[contains(text(), 'e-pasta')]"),
-                    (By.XPATH, "//button[contains(., 'paroli')]"),  # "password" in Latvian
-                    (By.XPATH, "//a[contains(., 'paroli')]"),
+                    (By.PARTIAL_LINK_TEXT, "e-pasta adrese"),  # "email address" in Latvian
+                    (By.PARTIAL_LINK_TEXT, "e-pasta"),
+                    (By.XPATH, "//button[contains(text(), 'e-pasta adrese')]"),
+                    (By.XPATH, "//a[contains(text(), 'e-pasta adrese')]"),
+                    (By.XPATH, "//button[contains(., 'piesakieties')]"),  # "sign in" in Latvian
+                    (By.XPATH, "//a[contains(., 'piesakieties')]"),
                     (By.CSS_SELECTOR, "button[class*='email']"),
                     (By.CSS_SELECTOR, "a[class*='email']"),
-                    # Try to find any visible link/button on the page
-                    (By.XPATH, "//a[contains(@class, 'Button')]"),
-                    (By.XPATH, "//button[contains(@class, 'Button')]"),
                 ]
                 
                 email_option_button = None
@@ -270,8 +252,8 @@ class VintedPriceBot:
                         for elem in elements:
                             if elem.is_displayed():
                                 text = elem.text.lower()
-                                # Check if text contains email/password related keywords
-                                if any(keyword in text for keyword in ['e-pasta', 'e-pasts', 'email', 'paroli', 'password', 'lietotāj']):
+                                # Look for "e-pasta adrese" or "piesakieties" text
+                                if 'e-pasta' in text or 'piesakieties' in text:
                                     email_option_button = elem
                                     logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
                                     break
@@ -283,13 +265,13 @@ class VintedPriceBot:
                 if email_option_button:
                     try:
                         email_option_button.click()
-                        logger.info("Clicked email/password option button")
+                        logger.info("✓ Clicked 'e-pasta adrese' button")
                     except:
                         self.driver.execute_script("arguments[0].click();", email_option_button)
-                        logger.info("Clicked email/password option via JavaScript")
-                    time.sleep(3)
+                        logger.info("✓ Clicked 'e-pasta adrese' button via JavaScript")
+                    time.sleep(3)  # Wait for email/password form to appear
                 else:
-                    logger.info("No email option button found, form might already be visible")
+                    logger.warning("No 'e-pasta adrese' button found")
                     time.sleep(2)
                     
             except Exception as e:
@@ -389,10 +371,19 @@ class VintedPriceBot:
                 self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", email_input)
                 logger.info("Email entered via JavaScript")
             
-            # Password should already be on the same form - no continue button needed
+            # Wait for both email and password fields to be visible (they appear together)
+            logger.info("Waiting for email and password form to appear...")
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
+                )
+                logger.info("✓ Password field detected - form is ready")
+            except:
+                logger.warning("Password field not found yet, continuing anyway...")
+            
             time.sleep(1)
             
-            # Find and fill password input (should be on same page as email)
+            # Find and fill password input (should be on same form as email)
             logger.info("Looking for password input...")
             password_input = None
             password_selectors = [
