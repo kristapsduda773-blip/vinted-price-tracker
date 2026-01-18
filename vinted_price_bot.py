@@ -623,7 +623,23 @@ class VintedPriceBot:
             
             # Navigate to item page
             self.driver.get(item_url)
-            time.sleep(5)  # Wait for page to fully load
+            
+            # Wait for page to be ready
+            WebDriverWait(self.driver, 15).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            time.sleep(3)  # Additional wait for dynamic content
+            logger.info("Page loaded successfully")
+            
+            # Close any modals/overlays that might block the button
+            try:
+                # Try to close modal overlay
+                overlay = self.driver.find_element(By.CSS_SELECTOR, "div[data-testid*='modal'], div.ReactModal__Overlay")
+                self.driver.execute_script("arguments[0].remove();", overlay)
+                logger.info("Closed modal overlay")
+                time.sleep(1)
+            except:
+                pass
             
             # Click "Edit listing" button - try multiple approaches
             logger.info("Looking for 'Edit listing' button...")
@@ -639,41 +655,73 @@ class VintedPriceBot:
             
             # First scroll to top
             self.driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(1)
+            time.sleep(2)
             
             for by_type, selector in selectors:
                 try:
                     logger.info(f"Trying selector: {selector}")
-                    edit_button = WebDriverWait(self.driver, 3).until(
+                    edit_button = WebDriverWait(self.driver, 5).until(
                         EC.presence_of_element_located((by_type, selector))
                     )
-                    logger.info(f"✓ Found button with: {selector}")
-                    break
-                except:
+                    # Check if button is visible
+                    if edit_button.is_displayed():
+                        logger.info(f"✓ Found visible button with: {selector}")
+                        break
+                    else:
+                        logger.info(f"Button found but not visible, trying next selector...")
+                        edit_button = None
+                except Exception as e:
+                    logger.info(f"Selector failed: {str(e)[:50]}")
                     pass
             
             # If not found at top, scroll down in increments
             if not edit_button:
                 logger.info("Button not found at top, scrolling down...")
-                for scroll_position in [300, 600, 900, 1200]:
-                    self.driver.execute_script(f"window.scrollTo(0, {scroll_position});")
-                    time.sleep(1)
+                for scroll_position in [300, 600, 900, 1200, 1500]:
+                    logger.info(f"Scrolling to position {scroll_position}...")
+                    self.driver.execute_script(f"window.scrollTo({{top: {scroll_position}, behavior: 'smooth'}});")
+                    time.sleep(2)  # Wait for scroll and content load
                     
                     for by_type, selector in selectors:
                         try:
-                            edit_button = WebDriverWait(self.driver, 2).until(
-                                EC.presence_of_element_located((by_type, selector))
-                            )
-                            logger.info(f"✓ Found button at scroll position {scroll_position} with: {selector}")
-                            break
+                            edit_button = self.driver.find_element(by_type, selector)
+                            if edit_button and edit_button.is_displayed():
+                                logger.info(f"✓ Found visible button at scroll position {scroll_position} with: {selector}")
+                                break
+                            else:
+                                edit_button = None
                         except:
                             pass
                     
                     if edit_button:
                         break
             
+            # Last resort: use JavaScript to find the button
+            if not edit_button:
+                logger.info("Trying JavaScript to find button...")
+                try:
+                    edit_button = self.driver.execute_script("""
+                        return document.querySelector('button[data-testid="item-edit-button"]');
+                    """)
+                    if edit_button:
+                        logger.info("✓ Found button via JavaScript")
+                except Exception as e:
+                    logger.error(f"JavaScript search failed: {e}")
+            
             if not edit_button:
                 logger.error("Could not find Edit listing button")
+                
+                # Debug: List all buttons on page
+                try:
+                    all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                    logger.error(f"Found {len(all_buttons)} total buttons on page:")
+                    for i, btn in enumerate(all_buttons[:10]):  # Show first 10
+                        btn_text = btn.text[:50] if btn.text else "(no text)"
+                        testid = btn.get_attribute('data-testid') or "(no testid)"
+                        logger.error(f"  Button {i+1}: text='{btn_text}', testid='{testid}'")
+                except Exception as e:
+                    logger.error(f"Could not list buttons: {e}")
+                
                 # Save screenshot for debugging
                 try:
                     self.driver.save_screenshot(f'/tmp/no_edit_button_{item["id"]}.png')
