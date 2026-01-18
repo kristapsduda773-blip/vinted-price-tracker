@@ -241,8 +241,13 @@ class VintedPriceBot:
                     (By.XPATH, "//a[contains(text(), 'e-pasta adrese')]"),
                     (By.XPATH, "//button[contains(., 'piesakieties')]"),  # "sign in" in Latvian
                     (By.XPATH, "//a[contains(., 'piesakieties')]"),
+                    (By.XPATH, "//button[contains(., 'Vai piesakieties')]"),  # Full text
+                    (By.XPATH, "//a[contains(., 'Vai piesakieties')]"),
                     (By.CSS_SELECTOR, "button[class*='email']"),
                     (By.CSS_SELECTOR, "a[class*='email']"),
+                    # Try finding any button/link that's visible after clicking Pieteikties
+                    (By.XPATH, "//div[@class='auth__container']//button"),
+                    (By.XPATH, "//div[@class='auth__container']//a"),
                 ]
                 
                 email_option_button = None
@@ -253,7 +258,7 @@ class VintedPriceBot:
                             if elem.is_displayed():
                                 text = elem.text.lower()
                                 # Look for "e-pasta adrese" or "piesakieties" text
-                                if 'e-pasta' in text or 'piesakieties' in text:
+                                if 'e-pasta' in text or 'piesakieties' in text or 'vai piesakieties' in text:
                                     email_option_button = elem
                                     logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
                                     break
@@ -271,7 +276,14 @@ class VintedPriceBot:
                         logger.info("✓ Clicked 'e-pasta adrese' button via JavaScript")
                     time.sleep(3)  # Wait for email/password form to appear
                 else:
-                    logger.warning("No 'e-pasta adrese' button found")
+                    logger.warning("No 'e-pasta adrese' button found - checking if form is already visible...")
+                    # Maybe the form is already visible? Check for #username
+                    try:
+                        username_check = self.driver.find_element(By.ID, "username")
+                        if username_check.is_displayed():
+                            logger.info("✓ Login form already visible (username field found)")
+                    except:
+                        pass
                     time.sleep(2)
                     
             except Exception as e:
@@ -282,25 +294,23 @@ class VintedPriceBot:
             logger.info("Waiting for login form to be interactive...")
             time.sleep(2)
             
-            # Find and fill email input - try multiple selectors (EXCLUDE search boxes)
+            # Find and fill email input - using exact selectors from user
             logger.info("Looking for email input in login form...")
             email_input = None
             email_selectors = [
-                (By.ID, "username"),
+                (By.ID, "username"),  # Exact ID from user
+                (By.XPATH, "//*[@id='username']"),  # Exact XPath from user
+                (By.CSS_SELECTOR, "#username"),  # CSS selector
+                (By.XPATH, "//div[@class='auth__container']//form//div[2]//div//input"),  # Based on user's CSS path
                 (By.NAME, "username"),
                 (By.NAME, "login"),
                 (By.CSS_SELECTOR, "input[name='login[login]']"),
                 (By.CSS_SELECTOR, "input[autocomplete='username']"),
                 (By.CSS_SELECTOR, "input[placeholder*='E-pasta']"),  # Email placeholder in Latvian
                 (By.CSS_SELECTOR, "input[placeholder*='e-pasta']"),
-                (By.CSS_SELECTOR, "input[placeholder*='email']"),
-                (By.CSS_SELECTOR, "input[placeholder*='Email']"),
                 (By.XPATH, "//form//input[@type='text' and not(@name='search_text')]"),  # Text input but not search
                 (By.XPATH, "//form//input[@type='email']"),
-                (By.XPATH, "//form//div[2]//input"),
-                (By.XPATH, "//form//input[1]"),  # First input in form
                 (By.CSS_SELECTOR, "form input[type='text']:not([name='search_text'])"),  # Form text input, not search
-                (By.CSS_SELECTOR, "form input[type='email']"),
             ]
             
             for by, selector in email_selectors:
@@ -383,14 +393,17 @@ class VintedPriceBot:
             
             time.sleep(1)
             
-            # Find and fill password input (should be on same form as email)
+            # Find and fill password input - using exact selectors from user
             logger.info("Looking for password input...")
             password_input = None
             password_selectors = [
-                (By.CSS_SELECTOR, "input[type='password']"),  # Most common first
-                (By.XPATH, "//input[@type='password']"),
-                (By.ID, "password"),
+                (By.ID, "password"),  # Exact ID from user
+                (By.XPATH, "//*[@id='password']"),  # Exact XPath from user
+                (By.CSS_SELECTOR, "#password"),  # CSS selector
+                (By.CSS_SELECTOR, "input[type='password'][name='password']"),  # With name attribute
                 (By.NAME, "password"),
+                (By.CSS_SELECTOR, "input[type='password']"),  # Generic password input
+                (By.XPATH, "//input[@type='password']"),
                 (By.CSS_SELECTOR, "input[name='login[password]']"),
                 (By.CSS_SELECTOR, "input[autocomplete='current-password']"),
                 (By.XPATH, "//form//div[3]//input[@type='password']"),
