@@ -877,47 +877,152 @@ class VintedPriceBot:
         try:
             # Navigate to item page
             self.driver.get(item['url'])
-            time.sleep(3)
+            time.sleep(5)  # Wait longer for page to fully load
+            
+            # Scroll to top to ensure edit button is visible
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(1)
             
             # Click edit button - using exact selector from Vinted
             logger.info("Looking for edit button...")
-            edit_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='item-edit-button']"))
-            )
-            logger.info("Edit button found, clicking...")
-            edit_button.click()
-            time.sleep(3)
+            edit_button = None
+            edit_selectors = [
+                (By.CSS_SELECTOR, "[data-testid='item-edit-button']"),
+                (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
+                (By.XPATH, "//button[@data-testid='item-edit-button']"),
+                (By.XPATH, "//button[contains(text(), 'Edit listing')]"),
+                (By.XPATH, "//button[contains(text(), 'Rediģēt')]"),  # Latvian for Edit
+            ]
+            
+            for by, selector in edit_selectors:
+                try:
+                    edit_button = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((by, selector))
+                    )
+                    logger.info(f"✓ Edit button found with: {by}={selector}")
+                    break
+                except:
+                    continue
+            
+            if not edit_button:
+                # Debug: List all buttons on the page
+                try:
+                    all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                    visible_buttons = [b for b in all_buttons if b.is_displayed()]
+                    logger.error(f"Could not find edit button. Found {len(visible_buttons)} visible buttons:")
+                    for idx, btn in enumerate(visible_buttons[:10]):
+                        testid = btn.get_attribute('data-testid')
+                        logger.error(f"  Button {idx+1}: text='{btn.text}', data-testid='{testid}'")
+                except:
+                    pass
+                raise Exception("Edit button not found")
+            
+            # Scroll edit button into view
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", edit_button)
+            time.sleep(0.5)
+            
+            # Click edit button
+            try:
+                edit_button.click()
+                logger.info("✓ Clicked edit button")
+            except:
+                self.driver.execute_script("arguments[0].click();", edit_button)
+                logger.info("✓ Clicked edit button via JavaScript")
+            
+            time.sleep(4)  # Wait for edit page to load
             
             # Find price input - using exact selector from Vinted
             logger.info("Looking for price input...")
-            price_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='price-input--input']"))
-            )
-            logger.info(f"Price input found with current value: {price_input.get_attribute('value')}")
+            price_input = None
+            price_selectors = [
+                (By.CSS_SELECTOR, "[data-testid='price-input--input']"),
+                (By.CSS_SELECTOR, "input[data-testid='price-input--input']"),
+                (By.XPATH, "//input[@data-testid='price-input--input']"),
+                (By.ID, "price"),
+                (By.NAME, "price"),
+            ]
             
-            # Clear and enter new price
-            price_input.clear()
+            for by, selector in price_selectors:
+                try:
+                    price_input = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    logger.info(f"✓ Price input found with: {by}={selector}")
+                    break
+                except:
+                    continue
+            
+            if not price_input:
+                raise Exception("Price input not found")
+            
+            logger.info(f"Price input current value: {price_input.get_attribute('value')}")
+            
+            # Scroll price input into view
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", price_input)
             time.sleep(0.5)
             
-            # Format price as Vinted expects (e.g., €13.00)
+            # Clear and enter new price
+            try:
+                price_input.clear()
+            except:
+                self.driver.execute_script("arguments[0].value = '';", price_input)
+            
+            time.sleep(0.5)
+            
+            # Format price as Vinted expects (e.g., 24.50)
             new_price_str = f"{item['new_price']:.2f}"
-            price_input.send_keys(new_price_str)
-            logger.info(f"Entered new price: €{new_price_str}")
+            try:
+                price_input.send_keys(new_price_str)
+                logger.info(f"✓ Entered new price: €{new_price_str}")
+            except:
+                self.driver.execute_script(f"arguments[0].value = '{new_price_str}';", price_input)
+                # Trigger input event
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", price_input)
+                logger.info(f"✓ Entered new price via JavaScript: €{new_price_str}")
+            
             time.sleep(1)
             
             # Submit changes - look for save/submit button
-            try:
-                save_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                logger.info("Save button found, clicking...")
-                save_button.click()
-            except:
-                # Alternative: look for button with text
+            logger.info("Looking for save button...")
+            save_button = None
+            save_selectors = [
+                (By.CSS_SELECTOR, "button[type='submit'][data-testid='save-button']"),
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//button[@type='submit']"),
+                (By.XPATH, "//button[contains(text(), 'Save')]"),
+                (By.XPATH, "//button[contains(text(), 'Saglabāt')]"),  # Latvian for Save
+            ]
+            
+            for by, selector in save_selectors:
+                try:
+                    save_button = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((by, selector))
+                    )
+                    logger.info(f"✓ Save button found with: {by}={selector}")
+                    break
+                except:
+                    continue
+            
+            if save_button:
+                try:
+                    save_button.click()
+                    logger.info("✓ Clicked save button")
+                except:
+                    self.driver.execute_script("arguments[0].click();", save_button)
+                    logger.info("✓ Clicked save button via JavaScript")
+            else:
+                # Fallback: look for button with text
                 buttons = self.driver.find_elements(By.TAG_NAME, "button")
                 for button in buttons:
-                    if 'save' in button.text.lower() or 'submit' in button.text.lower() or 'saglabāt' in button.text.lower():
-                        logger.info(f"Found button with text: {button.text}")
-                        button.click()
-                        break
+                    if button.is_displayed():
+                        text = button.text.lower()
+                        if 'save' in text or 'submit' in text or 'saglabāt' in text:
+                            logger.info(f"Found save button with text: {button.text}")
+                            try:
+                                button.click()
+                            except:
+                                self.driver.execute_script("arguments[0].click();", button)
+                            break
             
             time.sleep(3)
             
