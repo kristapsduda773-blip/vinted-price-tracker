@@ -218,9 +218,27 @@ class VintedPriceBot:
                         continue
                 
                 if login_link:
-                    login_link.click()
-                    logger.info("Clicked 'Login' link to switch to login mode")
+                    try:
+                        login_link.click()
+                        logger.info("Clicked 'Login' link to switch to login mode")
+                    except:
+                        self.driver.execute_script("arguments[0].click();", login_link)
+                        logger.info("Clicked 'Login' link via JavaScript")
                     time.sleep(3)
+                    
+                    # Wait for login form to appear (might be in a modal or new section)
+                    try:
+                        WebDriverWait(self.driver, 10).until(
+                            EC.any_of(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, "form input[type='text']:not([name='search_text'])")),
+                                EC.presence_of_element_located((By.ID, "username")),
+                                EC.presence_of_element_located((By.NAME, "username")),
+                                EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='E-pasta']")),
+                            )
+                        )
+                        logger.info("Login form detected")
+                    except:
+                        logger.warning("Login form might not have appeared, continuing anyway...")
                 else:
                     logger.info("No 'Login' link found, might already be in login mode")
                     
@@ -282,21 +300,25 @@ class VintedPriceBot:
             logger.info("Waiting for login form to be interactive...")
             time.sleep(2)
             
-            # Find and fill email input - try multiple selectors
-            logger.info("Looking for email input...")
+            # Find and fill email input - try multiple selectors (EXCLUDE search boxes)
+            logger.info("Looking for email input in login form...")
             email_input = None
             email_selectors = [
-                (By.CSS_SELECTOR, "input[type='text']"),  # Most common first
-                (By.CSS_SELECTOR, "input[type='email']"),
-                (By.XPATH, "//input[@type='text']"),
-                (By.XPATH, "//input[@type='email']"),
                 (By.ID, "username"),
                 (By.NAME, "username"),
                 (By.NAME, "login"),
                 (By.CSS_SELECTOR, "input[name='login[login]']"),
                 (By.CSS_SELECTOR, "input[autocomplete='username']"),
+                (By.CSS_SELECTOR, "input[placeholder*='E-pasta']"),  # Email placeholder in Latvian
+                (By.CSS_SELECTOR, "input[placeholder*='e-pasta']"),
+                (By.CSS_SELECTOR, "input[placeholder*='email']"),
+                (By.CSS_SELECTOR, "input[placeholder*='Email']"),
+                (By.XPATH, "//form//input[@type='text' and not(@name='search_text')]"),  # Text input but not search
+                (By.XPATH, "//form//input[@type='email']"),
                 (By.XPATH, "//form//div[2]//input"),
                 (By.XPATH, "//form//input[1]"),  # First input in form
+                (By.CSS_SELECTOR, "form input[type='text']:not([name='search_text'])"),  # Form text input, not search
+                (By.CSS_SELECTOR, "form input[type='email']"),
             ]
             
             for by, selector in email_selectors:
@@ -305,7 +327,17 @@ class VintedPriceBot:
                     email_input = WebDriverWait(self.driver, 5).until(
                         EC.presence_of_element_located((by, selector))
                     )
-                    logger.info(f"✓ Found email input with: {by}={selector}")
+                    # Verify it's not the search box
+                    input_name = email_input.get_attribute('name')
+                    input_id = email_input.get_attribute('id')
+                    placeholder = email_input.get_attribute('placeholder') or ''
+                    
+                    if input_name == 'search_text' or 'Meklēt' in placeholder:
+                        logger.warning(f"  Found search box instead, skipping...")
+                        email_input = None
+                        continue
+                    
+                    logger.info(f"✓ Found email input: name={input_name}, id={input_id}, placeholder={placeholder}")
                     break
                 except TimeoutException:
                     continue
