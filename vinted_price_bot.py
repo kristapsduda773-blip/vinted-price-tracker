@@ -299,49 +299,72 @@ class VintedPriceBot:
         
         try:
             self.driver.get(self.vinted_profile_url)
-            time.sleep(3)
+            time.sleep(5)
             
-            # Find all item cards
-            item_elements = self.driver.find_elements(By.CSS_SELECTOR, "[data-testid*='item-box']")
+            # Scroll down to load all items (lazy loading)
+            logger.info("Scrolling to load all items...")
+            last_height = self.driver.execute_script("return document.body.scrollHeight")
+            scroll_attempts = 0
+            max_scrolls = 10
             
-            logger.info(f"Found {len(item_elements)} items")
+            while scroll_attempts < max_scrolls:
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(2)
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    break
+                last_height = new_height
+                scroll_attempts += 1
             
-            for item_element in item_elements:
+            logger.info(f"Scrolled {scroll_attempts} times to load items")
+            
+            # Find all item links - using the actual selector from Vinted
+            item_links = self.driver.find_elements(By.CSS_SELECTOR, "a.new-item-box__overlay")
+            
+            logger.info(f"Found {len(item_links)} item links")
+            
+            for link_element in item_links:
                 try:
                     # Get item URL
-                    link = item_element.find_element(By.TAG_NAME, "a")
-                    item_url = link.get_attribute('href')
+                    item_url = link_element.get_attribute('href')
                     
-                    # Get item ID from URL
-                    item_id = item_url.split('/')[-1].split('-')[0]
+                    if not item_url or '/items/' not in item_url:
+                        continue
                     
-                    # Get title
-                    title_element = item_element.find_element(By.CSS_SELECTOR, "[data-testid='item-title']")
-                    title = title_element.text
+                    # Get item ID from URL (e.g., /items/7819896031)
+                    item_id = item_url.split('/items/')[-1].split('-')[0]
                     
-                    # Get price
-                    price_element = item_element.find_element(By.CSS_SELECTOR, "[data-testid='item-price']")
-                    price_text = price_element.text.replace('€', '').replace(',', '.').strip()
+                    # Get title from the title attribute
+                    title = link_element.get_attribute('title')
                     
-                    # Parse price (handle different formats)
+                    # Extract price from title (format: "...size: L, 13.00 €")
+                    price = 0.0
                     try:
-                        price = float(price_text.split()[0])
-                    except:
+                        if title and '€' in title:
+                            # Price is at the end of the title
+                            price_part = title.split('€')[0].split(',')[-1].strip()
+                            price = float(price_part)
+                    except Exception as e:
+                        logger.warning(f"Could not parse price from title: {e}")
                         price = 0.0
+                    
+                    # Clean up title (remove price and extra info)
+                    clean_title = title.split(',')[0] if title else f"Item {item_id}"
                     
                     items.append({
                         'id': item_id,
-                        'title': title,
+                        'title': clean_title,
                         'price': price,
-                        'url': item_url
+                        'url': item_url if item_url.startswith('http') else f"https://www.vinted.lv{item_url}"
                     })
                     
-                    logger.info(f"Scraped: {title} - €{price}")
+                    logger.info(f"Scraped: {clean_title} - €{price} (ID: {item_id})")
                     
                 except Exception as e:
                     logger.warning(f"Failed to parse item: {e}")
                     continue
-                    
+            
+            logger.info(f"Successfully scraped {len(items)} items")
             return items
             
         except Exception as e:
@@ -522,37 +545,62 @@ class VintedPriceBot:
         try:
             # Navigate to item page
             self.driver.get(item['url'])
-            time.sleep(2)
+            time.sleep(3)
             
-            # Click edit button
+            # Click edit button - using exact selector from Vinted
+            logger.info("Looking for edit button...")
             edit_button = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='item-edit-button']"))
             )
+            logger.info("Edit button found, clicking...")
             edit_button.click()
-            time.sleep(2)
+            time.sleep(3)
             
-            # Find price input
+            # Find price input - using exact selector from Vinted
+            logger.info("Looking for price input...")
             price_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='price']"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='price-input--input']"))
             )
+            logger.info(f"Price input found with current value: {price_input.get_attribute('value')}")
             
             # Clear and enter new price
             price_input.clear()
             time.sleep(0.5)
-            price_input.send_keys(str(item['new_price']))
+            
+            # Format price as Vinted expects (e.g., €13.00)
+            new_price_str = f"{item['new_price']:.2f}"
+            price_input.send_keys(new_price_str)
+            logger.info(f"Entered new price: €{new_price_str}")
             time.sleep(1)
             
-            # Submit changes
-            save_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-            save_button.click()
+            # Submit changes - look for save/submit button
+            try:
+                save_button = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                logger.info("Save button found, clicking...")
+                save_button.click()
+            except:
+                # Alternative: look for button with text
+                buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                for button in buttons:
+                    if 'save' in button.text.lower() or 'submit' in button.text.lower() or 'saglabāt' in button.text.lower():
+                        logger.info(f"Found button with text: {button.text}")
+                        button.click()
+                        break
+            
             time.sleep(3)
             
-            logger.info(f"Price updated: €{item['price']} → €{item['new_price']} ({item['price_change_percent']:+.1f}%)")
+            logger.info(f"✓ Price updated: €{item['price']:.2f} → €{item['new_price']:.2f} ({item['price_change_percent']:+.1f}%)")
             
             return True
             
         except Exception as e:
             logger.error(f"Failed to update price for {item['title']}: {e}")
+            # Save screenshot on error
+            try:
+                self.driver.save_screenshot(f'/tmp/price_update_error_{item["id"]}.png')
+                logger.info(f"Error screenshot saved for item {item['id']}")
+            except:
+                pass
             return False
             
     def run(self):
