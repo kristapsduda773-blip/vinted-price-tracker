@@ -587,39 +587,8 @@ class VintedPriceBot:
         self.sheet.update('A1:I' + str(len(updated_rows)), updated_rows)
         
         # Format the sheet
-        try:
-            # Bold header with gray background
-            self.sheet.format('A1:I1', {
-                'textFormat': {'bold': True},
-                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
-            })
-            
-            # Alternating row colors (white and light gray) for better readability
-            for row_idx in range(2, len(updated_rows) + 1):
-                # Even rows (2, 4, 6...) = white, Odd rows (3, 5, 7...) = light gray
-                if row_idx % 2 == 0:
-                    # White background (default)
-                    bg_color = {'red': 1.0, 'green': 1.0, 'blue': 1.0}
-                else:
-                    # Light gray background
-                    bg_color = {'red': 0.95, 'green': 0.95, 'blue': 0.95}
-                
-                # Check if it's a sold/removed item
-                row_data = updated_rows[row_idx - 1] if row_idx - 1 < len(updated_rows) else []
-                if len(row_data) > 7 and '❌' in str(row_data[7]):  # Status column is now index 7
-                    # Red background for sold items
-                    bg_color = {'red': 1.0, 'green': 0.9, 'blue': 0.9}
-                    self.sheet.format(f'A{row_idx}:I{row_idx}', {
-                        'backgroundColor': bg_color,
-                        'textFormat': {'strikethrough': True}
-                    })
-                else:
-                    # Normal alternating colors
-                    self.sheet.format(f'A{row_idx}:I{row_idx}', {
-                        'backgroundColor': bg_color
-                    })
-        except Exception as e:
-            logger.warning(f"Could not format sheet: {e}")
+        # No formatting needed - sheet is managed as a table
+        logger.info("✓ Sheet data updated (table format applied)")
         
         # Count new discoveries
         new_discovery_count = len([i for i in items if i.get('is_new_discovery', False)])
@@ -656,20 +625,76 @@ class VintedPriceBot:
             self.driver.get(item_url)
             time.sleep(5)  # Wait for page to fully load
             
-            # Scroll to top to ensure edit button is visible
-            self.driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(2)
-            
-            # Click "Edit listing" button - using exact data-testid
+            # Click "Edit listing" button - try multiple approaches
             logger.info("Looking for 'Edit listing' button...")
-            edit_button = WebDriverWait(self.driver, 15).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='item-edit-button']"))
-            )
-            # Scroll button into view
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", edit_button)
+            edit_button = None
+            
+            # Try multiple selectors and scrolling strategies
+            selectors = [
+                (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
+                (By.XPATH, "//button[@data-testid='item-edit-button']"),
+                (By.XPATH, "//span[contains(text(), 'Edit listing')]/parent::button"),
+                (By.XPATH, "//button[contains(., 'Edit listing')]"),
+            ]
+            
+            # First scroll to top
+            self.driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(1)
-            logger.info("Edit listing button found, clicking...")
-            edit_button.click()
+            
+            for by_type, selector in selectors:
+                try:
+                    logger.info(f"Trying selector: {selector}")
+                    edit_button = WebDriverWait(self.driver, 3).until(
+                        EC.presence_of_element_located((by_type, selector))
+                    )
+                    logger.info(f"✓ Found button with: {selector}")
+                    break
+                except:
+                    pass
+            
+            # If not found at top, scroll down in increments
+            if not edit_button:
+                logger.info("Button not found at top, scrolling down...")
+                for scroll_position in [300, 600, 900, 1200]:
+                    self.driver.execute_script(f"window.scrollTo(0, {scroll_position});")
+                    time.sleep(1)
+                    
+                    for by_type, selector in selectors:
+                        try:
+                            edit_button = WebDriverWait(self.driver, 2).until(
+                                EC.presence_of_element_located((by_type, selector))
+                            )
+                            logger.info(f"✓ Found button at scroll position {scroll_position} with: {selector}")
+                            break
+                        except:
+                            pass
+                    
+                    if edit_button:
+                        break
+            
+            if not edit_button:
+                logger.error("Could not find Edit listing button")
+                # Save screenshot for debugging
+                try:
+                    self.driver.save_screenshot(f'/tmp/no_edit_button_{item["id"]}.png')
+                    logger.info(f"Screenshot saved for item {item['id']}")
+                except:
+                    pass
+                return False
+            
+            # Scroll button into view and click
+            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", edit_button)
+            time.sleep(1)
+            
+            # Try clicking, use JavaScript if normal click fails
+            try:
+                edit_button.click()
+                logger.info("Edit listing button clicked")
+            except:
+                logger.warning("Normal click failed, using JavaScript click...")
+                self.driver.execute_script("arguments[0].click();", edit_button)
+                logger.info("Edit listing button clicked via JavaScript")
+            
             time.sleep(4)  # Wait for edit form to load
             
             # Find price input - using exact ID and data-testid
