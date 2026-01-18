@@ -176,10 +176,13 @@ class VintedPriceBot:
             email_input = None
             email_selectors = [
                 (By.ID, "username"),
+                (By.NAME, "username"),
                 (By.NAME, "login"),
                 (By.CSS_SELECTOR, "input[name='login[login]']"),
                 (By.CSS_SELECTOR, "input[type='email']"),
+                (By.CSS_SELECTOR, "input[type='text']"),
                 (By.CSS_SELECTOR, "input[autocomplete='username']"),
+                (By.XPATH, "//form//div[2]//input"),  # Based on your XPath structure
                 (By.XPATH, "//input[@type='text' or @type='email']")
             ]
             
@@ -213,7 +216,9 @@ class VintedPriceBot:
                 (By.NAME, "password"),
                 (By.CSS_SELECTOR, "input[name='login[password]']"),
                 (By.CSS_SELECTOR, "input[type='password']"),
-                (By.CSS_SELECTOR, "input[autocomplete='current-password']")
+                (By.CSS_SELECTOR, "input[autocomplete='current-password']"),
+                (By.XPATH, "//form//div[3]//input[@type='password']"),  # Based on your XPath structure
+                (By.XPATH, "//input[@type='password']")
             ]
             
             for by, selector in password_selectors:
@@ -463,7 +468,7 @@ class VintedPriceBot:
         
         # Log changes
         if new_items:
-            logger.info(f"🆕 New items found: {len(new_items)}")
+            logger.info(f"🆕 New items found: {len(new_items)} (prices will NOT change until next run)")
             for item_id in new_items:
                 item = next((i for i in items if i['id'] == item_id), None)
                 if item:
@@ -485,9 +490,11 @@ class VintedPriceBot:
         for item in items:
             item_id = item['id']
             current_price = item['price']
+            is_new_item = item_id not in existing_dict
             
             # Check if item exists in sheet
-            if item_id in existing_dict:
+            if not is_new_item:
+                # EXISTING ITEM - use sheet settings
                 # Get the percentage from sheet, use default if empty
                 percent_str = str(existing_dict[item_id].get('Price Change %', '')).strip()
                 
@@ -508,11 +515,14 @@ class VintedPriceBot:
                         floor_price = None
                 else:
                     floor_price = None
+                
+                status = 'Active'
             else:
-                # New item, use default percentage, no floor price
-                price_change_percent = self.default_percent
+                # NEW ITEM - Don't change price on first discovery
+                price_change_percent = 0  # 0% change = no price update
                 floor_price = None
-                logger.info(f"   Using default {self.default_percent}% for new item: {item['title']}")
+                status = '🆕 New'
+                logger.info(f"   🆕 NEW ITEM DISCOVERED: {item['title']} - Price will NOT be changed this run")
             
             # Calculate new price
             new_price = round(current_price * (1 + price_change_percent / 100), 2)
@@ -526,15 +536,16 @@ class VintedPriceBot:
             item['new_price'] = new_price
             item['price_change_percent'] = price_change_percent
             item['floor_price'] = floor_price if floor_price is not None else ''
+            item['is_new_discovery'] = is_new_item  # Flag for later use
             
             updated_rows.append([
                 item_id,
                 item['title'],
                 current_price,
                 new_price,
-                price_change_percent,
+                price_change_percent if not is_new_item else self.default_percent,  # Show default % for new items
                 floor_price if floor_price is not None else '',
-                'Active',
+                status,
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ])
         
@@ -578,9 +589,15 @@ class VintedPriceBot:
         except Exception as e:
             logger.warning(f"Could not format sheet: {e}")
         
+        # Count new discoveries
+        new_discovery_count = len([i for i in items if i.get('is_new_discovery', False)])
+        
         logger.info(f"📊 Google Sheets updated:")
         logger.info(f"   Active items: {len(items)}")
-        logger.info(f"   Removed items: {len(removed_item_ids)}")
+        if new_discovery_count > 0:
+            logger.info(f"   🆕 New discoveries: {new_discovery_count}")
+        if removed_item_ids:
+            logger.info(f"   🗑️  Removed items: {len(removed_item_ids)}")
         logger.info(f"   Total rows: {len(updated_rows) - 1}")
         
         return items
@@ -689,8 +706,17 @@ class VintedPriceBot:
                 logger.info("⚠️  TESTING MODE: Only updating last item with price change")
                 success_count = 0
                 
-                # Find items that need price changes
-                items_to_update = [item for item in items if item['new_price'] != item['price']]
+                # Find items that need price changes (exclude new discoveries and items with no change)
+                items_to_update = [
+                    item for item in items 
+                    if item['new_price'] != item['price'] 
+                    and not item.get('is_new_discovery', False)  # Skip newly discovered items
+                ]
+                
+                # Count new discoveries that are being skipped
+                new_discoveries = [item for item in items if item.get('is_new_discovery', False)]
+                if new_discoveries:
+                    logger.info(f"🆕 Skipping {len(new_discoveries)} newly discovered items (will update next run)")
                 
                 if items_to_update:
                     # Get the last item
@@ -711,11 +737,11 @@ class VintedPriceBot:
                     
                     time.sleep(2)
                 else:
-                    logger.info("No items need price changes")
+                    logger.info("No items need price changes (excluding new discoveries)")
                 
                 # Log items with no change needed
                 for item in items:
-                    if item['new_price'] == item['price']:
+                    if item['new_price'] == item['price'] and not item.get('is_new_discovery', False):
                         logger.info(f"Skipping {item['title']} - no price change needed")
                 
                 logger.info("=" * 60)
