@@ -154,9 +154,9 @@ class VintedPriceBot:
         logger.info("Logging into Vinted...")
         
         try:
-            # Go directly to login page (try standard login URL)
-            self.driver.get('https://www.vinted.lv/member/general/login')
-            time.sleep(5)
+            # Go to the signup/login page (Vinted uses same page for both)
+            self.driver.get('https://www.vinted.lv/member/signup/select_type?ref_url=%2F')
+            time.sleep(3)
             
             logger.info(f"Loaded page: {self.driver.current_url}")
             
@@ -171,36 +171,67 @@ class VintedPriceBot:
             except:
                 logger.info("No cookie banner found")
             
+            # Wait for the login form to be present (sometimes it's lazy-loaded)
+            logger.info("Waiting for login form to load...")
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "form, [class*='form'], [class*='login']"))
+                )
+                logger.info("Form detected on page")
+                time.sleep(2)  # Extra wait for form to fully render
+            except:
+                logger.warning("Could not detect form element, continuing anyway...")
+                time.sleep(3)
+            
             # Find and fill email input - try multiple selectors
             logger.info("Looking for email input...")
             email_input = None
             email_selectors = [
+                (By.CSS_SELECTOR, "input[type='text']"),  # Most common first
+                (By.CSS_SELECTOR, "input[type='email']"),
+                (By.XPATH, "//input[@type='text']"),
+                (By.XPATH, "//input[@type='email']"),
                 (By.ID, "username"),
                 (By.NAME, "username"),
                 (By.NAME, "login"),
                 (By.CSS_SELECTOR, "input[name='login[login]']"),
-                (By.CSS_SELECTOR, "input[type='email']"),
-                (By.CSS_SELECTOR, "input[type='text']"),
                 (By.CSS_SELECTOR, "input[autocomplete='username']"),
-                (By.XPATH, "//form//div[2]//input"),  # Based on your XPath structure
-                (By.XPATH, "//input[@type='text' or @type='email']")
+                (By.XPATH, "//form//div[2]//input"),
+                (By.XPATH, "//form//input[1]"),  # First input in form
             ]
             
             for by, selector in email_selectors:
                 try:
-                    email_input = WebDriverWait(self.driver, 3).until(
+                    logger.info(f"  Trying: {by}={selector}")
+                    email_input = WebDriverWait(self.driver, 5).until(
                         EC.presence_of_element_located((by, selector))
                     )
-                    logger.info(f"Found email input with: {by}={selector}")
+                    logger.info(f"✓ Found email input with: {by}={selector}")
                     break
-                except:
+                except TimeoutException:
+                    continue
+                except Exception as e:
+                    logger.debug(f"  Failed with error: {e}")
                     continue
             
             if not email_input:
+                # Debug: List all input elements on the page
+                try:
+                    all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                    logger.error(f"Could not find email input. Found {len(all_inputs)} input elements total:")
+                    for idx, inp in enumerate(all_inputs[:10]):  # Show first 10
+                        input_type = inp.get_attribute('type')
+                        input_name = inp.get_attribute('name')
+                        input_id = inp.get_attribute('id')
+                        input_placeholder = inp.get_attribute('placeholder')
+                        logger.error(f"  Input {idx+1}: type={input_type}, name={input_name}, id={input_id}, placeholder={input_placeholder}")
+                except Exception as e:
+                    logger.error(f"Could not list inputs: {e}")
+                
                 # Save page source for debugging
                 with open('/tmp/vinted_login_page.html', 'w', encoding='utf-8') as f:
                     f.write(self.driver.page_source)
-                logger.error("Could not find email input. Page source saved to /tmp/vinted_login_page.html")
+                logger.error("Page source saved to /tmp/vinted_login_page.html")
                 raise Exception("Email input not found")
             
             email_input.clear()
