@@ -614,8 +614,8 @@ class VintedPriceBot:
             self.setup_driver()
             self.setup_google_sheets()
             
-            # Login and fetch items
-            self.login_to_vinted()
+            # Fetch items from PUBLIC profile (no login needed)
+            logger.info("Fetching items from public profile (no login required)...")
             items = self.get_listed_items()
             
             if not items:
@@ -625,28 +625,45 @@ class VintedPriceBot:
             # Sync with Google Sheets
             items = self.sync_with_google_sheets(items)
             
+            # Now login for price updates
+            logger.info("\n" + "=" * 60)
+            logger.info("Logging in to update prices...")
+            logger.info("=" * 60)
+            try:
+                self.login_to_vinted()
+                can_update = True
+            except Exception as e:
+                logger.error(f"Login failed: {e}")
+                logger.warning("⚠️  Items saved to Google Sheet, but price updates skipped")
+                can_update = False
+            
             # Update prices (TESTING MODE: Only first item)
-            logger.info("⚠️  TESTING MODE: Only updating first item with price change")
-            success_count = 0
-            updated_count = 0
-            
-            for item in items:
-                if item['new_price'] != item['price']:
-                    if updated_count == 0:  # Only update first item
-                        logger.info(f"🧪 Testing price update on first item: {item['title']}")
-                        if self.update_item_price(item):
-                            success_count += 1
-                        updated_count += 1
-                        time.sleep(2)  # Be respectful with requests
+            if can_update:
+                logger.info("⚠️  TESTING MODE: Only updating first item with price change")
+                success_count = 0
+                updated_count = 0
+                
+                for item in items:
+                    if item['new_price'] != item['price']:
+                        if updated_count == 0:  # Only update first item
+                            logger.info(f"🧪 Testing price update on first item: {item['title']}")
+                            if self.update_item_price(item):
+                                success_count += 1
+                            updated_count += 1
+                            time.sleep(2)  # Be respectful with requests
+                        else:
+                            logger.info(f"⏭️  Skipping {item['title']} - test mode (would change €{item['price']} → €{item['new_price']})")
                     else:
-                        logger.info(f"⏭️  Skipping {item['title']} - test mode (would change €{item['price']} → €{item['new_price']})")
-                else:
-                    logger.info(f"Skipping {item['title']} - no price change needed")
-            
-            logger.info("=" * 60)
-            logger.info(f"Bot completed! Updated {success_count}/1 items (test mode)")
-            logger.info(f"⚠️  TEST MODE: {len([i for i in items if i['new_price'] != i['price']]) - updated_count} items skipped")
-            logger.info("=" * 60)
+                        logger.info(f"Skipping {item['title']} - no price change needed")
+                
+                logger.info("=" * 60)
+                logger.info(f"Bot completed! Updated {success_count}/1 items (test mode)")
+                logger.info(f"⚠️  TEST MODE: {len([i for i in items if i['new_price'] != i['price']]) - updated_count} items skipped")
+                logger.info("=" * 60)
+            else:
+                logger.info("=" * 60)
+                logger.info("Bot completed! Items synced to Google Sheet (no price updates)")
+                logger.info("=" * 60)
             
         except Exception as e:
             logger.error(f"Bot execution failed: {e}")
