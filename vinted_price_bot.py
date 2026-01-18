@@ -248,10 +248,11 @@ class VintedPriceBot:
                     logger.info(f"  Button {idx+1}: text='{btn.text}', class='{btn.get_attribute('class')}'")
                 
                 logger.info(f"Visible links ({len(visible_links)}):")
-                for idx, link in enumerate(visible_links[:10]):
+                for idx, link in enumerate(visible_links):
                     text = link.text.strip()
                     href = link.get_attribute('href')
-                    if text or 'e-pasta' in (href or '').lower():
+                    # Show all links, especially ones with e-pasta or email-related text
+                    if text or 'e-pasta' in (href or '').lower() or 'e-pasta' in text.lower() or 'email' in text.lower() or 'piesakieties' in text.lower() or 'reģistrējieties' in text.lower():
                         logger.info(f"  Link {idx+1}: text='{text}', href='{href}'")
             except Exception as e:
                 logger.warning(f"Could not list buttons/links: {e}")
@@ -284,8 +285,9 @@ class VintedPriceBot:
                         for elem in elements:
                             if elem.is_displayed():
                                 text = elem.text.lower()
-                                # Look for "e-pasta adrese" or "piesakieties" text
-                                if 'e-pasta' in text or 'piesakieties' in text or 'vai piesakieties' in text or 'izmantojot' in text:
+                                # Look for "e-pasta" but EXCLUDE social login buttons (Apple, Facebook, Google)
+                                if ('e-pasta' in text or 'piesakieties' in text or 'vai piesakieties' in text) and \
+                                   'apple' not in text and 'facebook' not in text and 'google' not in text:
                                     email_option_button = elem
                                     logger.info(f"Found email option: '{elem.text}' with {by}={selector}")
                                     break
@@ -293,6 +295,16 @@ class VintedPriceBot:
                             break
                     except:
                         continue
+                
+                # If not found in buttons, try links specifically
+                if not email_option_button:
+                    logger.info("Trying to find email option in links...")
+                    for link in visible_links:
+                        text = link.text.lower()
+                        if 'e-pasta' in text and 'apple' not in text and 'facebook' not in text and 'google' not in text:
+                            email_option_button = link
+                            logger.info(f"Found email option in links: '{link.text}'")
+                            break
                 
                 if email_option_button:
                     try:
