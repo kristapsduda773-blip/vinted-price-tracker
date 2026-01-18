@@ -621,6 +621,20 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
+            # Verify we're still logged in by checking profile link
+            try:
+                self.driver.get("https://www.vinted.lv")
+                time.sleep(2)
+                # Look for user menu/profile indicator
+                user_menu = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/member/']")
+                if not user_menu:
+                    logger.warning("⚠️ Not logged in! Attempting to re-login...")
+                    self.login_to_vinted()
+                else:
+                    logger.info("✓ Login session active")
+            except Exception as e:
+                logger.warning(f"Could not verify login status: {e}")
+            
             # Navigate to item page
             self.driver.get(item_url)
             
@@ -649,8 +663,14 @@ class VintedPriceBot:
             selectors = [
                 (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
                 (By.XPATH, "//button[@data-testid='item-edit-button']"),
+                # User-provided selectors
+                (By.CSS_SELECTOR, "#sidebar > div.item-page-sidebar-content > div:nth-child(1) > div > div > div > div > div > div.details-list__info > div.details-list__item.details-list--actions > div.u-grid.u-gap-regular > button:nth-child(5)"),
+                (By.XPATH, "//*[@id='sidebar']/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
+                (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
+                # Generic selectors
                 (By.XPATH, "//span[contains(text(), 'Edit listing')]/parent::button"),
                 (By.XPATH, "//button[contains(., 'Edit listing')]"),
+                (By.XPATH, "//span[text()='Edit listing']/ancestor::button"),
             ]
             
             # First scroll to top
@@ -700,11 +720,21 @@ class VintedPriceBot:
             if not edit_button:
                 logger.info("Trying JavaScript to find button...")
                 try:
+                    # Try data-testid first
                     edit_button = self.driver.execute_script("""
-                        return document.querySelector('button[data-testid="item-edit-button"]');
+                        let btn = document.querySelector('button[data-testid="item-edit-button"]');
+                        if (!btn) {
+                            // Try finding by text content
+                            let allButtons = Array.from(document.querySelectorAll('button'));
+                            btn = allButtons.find(b => {
+                                let span = b.querySelector('span.web_ui__Button__label');
+                                return span && span.textContent.trim() === 'Edit listing';
+                            });
+                        }
+                        return btn;
                     """)
                     if edit_button:
-                        logger.info("✓ Found button via JavaScript")
+                        logger.info("✓ Found button via JavaScript (by text content)")
                 except Exception as e:
                     logger.error(f"JavaScript search failed: {e}")
             
@@ -715,7 +745,20 @@ class VintedPriceBot:
                 try:
                     all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
                     logger.error(f"Found {len(all_buttons)} total buttons on page:")
-                    for i, btn in enumerate(all_buttons[:10]):  # Show first 10
+                    
+                    # Check for any buttons with "Edit" text
+                    edit_buttons = [b for b in all_buttons if 'edit' in b.text.lower()]
+                    if edit_buttons:
+                        logger.error(f"Found {len(edit_buttons)} buttons with 'edit' in text:")
+                        for i, btn in enumerate(edit_buttons):
+                            btn_text = btn.text[:80] if btn.text else "(no text)"
+                            testid = btn.get_attribute('data-testid') or "(no testid)"
+                            logger.error(f"  Edit Button {i+1}: text='{btn_text}', testid='{testid}'")
+                    else:
+                        logger.error("⚠️ NO BUTTONS WITH 'EDIT' TEXT FOUND - User likely not logged in!")
+                    
+                    # Show first 10 buttons
+                    for i, btn in enumerate(all_buttons[:10]):
                         btn_text = btn.text[:50] if btn.text else "(no text)"
                         testid = btn.get_attribute('data-testid') or "(no testid)"
                         logger.error(f"  Button {i+1}: text='{btn_text}', testid='{testid}'")
