@@ -775,10 +775,22 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
-            # Navigate directly to edit page (item_url + '/edit')
+            # First navigate to item page to establish session context
+            logger.info(f"Navigating to item page first: {item_url}")
+            self.driver.get(item_url)
+            time.sleep(3)  # Wait for item page to load
+            
+            # Verify we're on item page (not redirected to login)
+            current_url = self.driver.current_url
+            if any(x in current_url for x in ['/login', '/signup', '/signin']):
+                logger.error("⚠️ Redirected to login from item page - session invalid!")
+                return False
+            
+            # Now navigate to edit page using JavaScript (preserves session better)
             edit_url = item_url.rstrip('/') + '/edit'
-            logger.info(f"Navigating directly to edit page: {edit_url}")
-            self.driver.get(edit_url)
+            logger.info(f"Navigating to edit page via JavaScript: {edit_url}")
+            self.driver.execute_script(f"window.location.href = '{edit_url}';")
+            time.sleep(2)  # Brief wait for navigation
             
             # Wait for edit page to load
             WebDriverWait(self.driver, 15).until(
