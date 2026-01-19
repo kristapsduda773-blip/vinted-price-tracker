@@ -775,287 +775,10 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
-            # Navigate directly to item page
-            logger.info(f"Navigating to item page: {item_url}")
-            self.driver.get(item_url)
-            
-            # Verify cookies are still present
-            try:
-                cookies = self.driver.get_cookies()
-                session_cookies = [c for c in cookies if 'session' in c['name'].lower() or 'auth' in c['name'].lower() or '_vinted' in c['name']]
-                if session_cookies:
-                    logger.info(f"✓ Session cookies still present ({len(session_cookies)} cookies)")
-                else:
-                    logger.warning("⚠️ Session cookies missing!")
-            except:
-                pass
-            
-            # Instead of navigating to /edit, stay on item page and find edit button
-            # This avoids triggering Vinted's anti-automation on /edit URLs
-            logger.info("Staying on item page and looking for Edit button...")
-            
-            # Wait for page to be fully ready
-            WebDriverWait(self.driver, 15).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
-            time.sleep(5)  # Additional wait for dynamic content
-            
-            # Scroll to top first (edit button is at top of page, not sidebar)
-            logger.info("Scrolling to top of page (edit button location)...")
-            self.driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(2)
-            
-            # Also scroll through page to trigger lazy loading
-            self.driver.execute_script("window.scrollTo(0, 300);")
-            time.sleep(1)
-            self.driver.execute_script("window.scrollTo(0, 600);")
-            time.sleep(1)
-            self.driver.execute_script("window.scrollTo(0, 0);")  # Back to top
-            time.sleep(2)
-            
-            # DEBUG: Print HTML structure to help locate edit button (check entire page, not just sidebar)
-            logger.info("=" * 60)
-            logger.info("DEBUG: Analyzing HTML structure of item page (checking entire page)...")
-            logger.info("=" * 60)
-            try:
-                html_structure = self.driver.execute_script("""
-                    let result = [];
-                    
-                    // Search ENTIRE PAGE for edit button
-                    result.push('=== SEARCHING ENTIRE PAGE FOR EDIT BUTTON ===');
-                    
-                    // 1. Search all buttons on page
-                    let allButtons = document.querySelectorAll('button');
-                    result.push('Total buttons on entire page: ' + allButtons.length);
-                    
-                    let editButtons = [];
-                    allButtons.forEach((btn, idx) => {
-                        let text = btn.textContent.trim().toLowerCase();
-                        let testid = btn.getAttribute('data-testid') || '';
-                        let visible = btn.offsetParent !== null;
-                        
-                        // Check for English "edit" or Latvian "rediģēt" or testid
-                        if (text.includes('edit') || text.includes('rediģēt') || testid.includes('edit')) {
-                            editButtons.push({
-                                index: idx,
-                                text: btn.textContent.trim().substring(0, 60),
-                                testid: testid,
-                                visible: visible,
-                                html: btn.outerHTML.substring(0, 400),
-                                location: 'unknown'
-                            });
-                        }
-                    });
-                    
-                    if (editButtons.length > 0) {
-                        result.push('\\n*** FOUND ' + editButtons.length + ' EDIT BUTTON(S) ON PAGE ***');
-                        editButtons.forEach((btn, idx) => {
-                            result.push(`\\nEdit Button ${idx + 1}:`);
-                            result.push(`  Text: "${btn.text}"`);
-                            result.push(`  data-testid: "${btn.testid}"`);
-                            result.push(`  Visible: ${btn.visible}`);
-                            result.push(`  HTML: ${btn.html}`);
-                        });
-                    } else {
-                        result.push('\\n✗ NO BUTTONS WITH "edit" OR "rediģēt" TEXT FOUND ON ENTIRE PAGE');
-                    }
-                    
-                    // 2. Check specific data-testid
-                    let editBtn = document.querySelector('button[data-testid="item-edit-button"]');
-                    if (editBtn) {
-                        result.push('\\n✓ Found button with data-testid="item-edit-button"');
-                        result.push('  Text: ' + editBtn.textContent.trim().substring(0, 50));
-                        result.push('  Visible: ' + (editBtn.offsetParent !== null));
-                        result.push('  HTML: ' + editBtn.outerHTML.substring(0, 400));
-                        
-                        // Find parent structure
-                        let parent = editBtn.parentElement;
-                        let parentInfo = [];
-                        for (let i = 0; i < 5 && parent; i++) {
-                            parentInfo.push(parent.tagName + (parent.id ? '#' + parent.id : '') + (parent.className ? '.' + parent.className.split(' ')[0] : ''));
-                            parent = parent.parentElement;
-                        }
-                        result.push('  Parent structure: ' + parentInfo.join(' > '));
-                    } else {
-                        result.push('\\n✗ No button with data-testid="item-edit-button" found');
-                    }
-                    
-                    // 3. Check main content area (top of page)
-                    result.push('\\n=== CHECKING MAIN CONTENT AREA (TOP OF PAGE) ===');
-                    let main = document.querySelector('main');
-                    if (main) {
-                        let mainButtons = main.querySelectorAll('button');
-                        result.push('Buttons in <main>: ' + mainButtons.length);
-                        mainButtons.forEach((btn, idx) => {
-                            let text = btn.textContent.trim().toLowerCase();
-                            // Check for English "edit" or Latvian "rediģēt"
-                            if (text.includes('edit') || text.includes('rediģēt')) {
-                                result.push(`  Main Button ${idx + 1}: "${btn.textContent.trim().substring(0, 50)}"`);
-                                result.push(`    HTML: ${btn.outerHTML.substring(0, 300)}`);
-                            }
-                        });
-                    }
-                    
-                    // 4. Check header area
-                    result.push('\\n=== CHECKING HEADER AREA ===');
-                    let header = document.querySelector('header, [role="banner"]');
-                    if (header) {
-                        let headerButtons = header.querySelectorAll('button');
-                        result.push('Buttons in header: ' + headerButtons.length);
-                    }
-                    
-                    return result.join('\\n');
-                """)
-                logger.info(f"\n{html_structure}\n")
-            except Exception as e:
-                logger.error(f"Could not analyze HTML structure: {e}")
-                # Fallback: save page source
-                try:
-                    with open('/tmp/item_page_structure.html', 'w', encoding='utf-8') as f:
-                        f.write(self.driver.page_source)
-                    logger.info("Page source saved to /tmp/item_page_structure.html")
-                except:
-                    pass
-            
-            logger.info("=" * 60)
-            
-            # Now try to find edit button on the item page (search entire page, not just sidebar)
-            # Page is in Latvian, so button text is "Rediģēt aprakstu" (Edit listing)
-            edit_button = None
-            edit_selectors = [
-                # Data-testid selectors (most reliable - works in any language)
-                (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
-                (By.XPATH, "//button[@data-testid='item-edit-button']"),
-                # Text-based selectors - Latvian (page is in Latvian)
-                (By.XPATH, "//span[contains(text(), 'Rediģēt aprakstu')]/ancestor::button"),
-                (By.XPATH, "//button[.//span[contains(text(), 'Rediģēt aprakstu')]]"),
-                (By.XPATH, "//button[contains(., 'Rediģēt aprakstu')]"),
-                (By.XPATH, "//span[contains(text(), 'Rediģēt')]/ancestor::button"),
-                (By.XPATH, "//button[contains(., 'Rediģēt')]"),
-                # Text-based selectors - English (fallback)
-                (By.XPATH, "//span[contains(text(), 'Edit listing')]/ancestor::button"),
-                (By.XPATH, "//button[.//span[contains(text(), 'Edit listing')]]"),
-                (By.XPATH, "//button[contains(., 'Edit listing')]"),
-                # User-provided exact XPath (if it's actually in aside)
-                (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
-                # Main content area
-                (By.XPATH, "//main//button[@data-testid='item-edit-button']"),
-                (By.XPATH, "//main//button[contains(., 'Rediģēt')]"),
-                (By.XPATH, "//main//button[contains(., 'Edit')]"),
-            ]
-            
-            # Try finding button with multiple wait strategies
-            for attempt in range(3):  # Try 3 times
-                if edit_button:
-                    break
-                    
-                logger.info(f"Attempt {attempt + 1}/3 to find edit button...")
-                
-                for by_type, selector in edit_selectors:
-                    try:
-                        logger.info(f"  Trying selector: {selector[:80]}...")
-                        # Try presence first, then clickable
-                        edit_button = WebDriverWait(self.driver, 8).until(
-                            EC.presence_of_element_located((by_type, selector))
-                        )
-                        
-                        # Check if visible
-                        if edit_button and edit_button.is_displayed():
-                            # Scroll to it
-                            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});", edit_button)
-                            time.sleep(1)
-                            
-                            # Verify it's still there and clickable
-                            if WebDriverWait(self.driver, 3).until(EC.element_to_be_clickable((by_type, selector))):
-                                logger.info(f"✓ Found visible and clickable edit button with: {selector[:80]}")
-                                break
-                            else:
-                                edit_button = None
-                        else:
-                            logger.info(f"  Button found but not visible")
-                            edit_button = None
-                    except Exception as e:
-                        logger.info(f"  Selector failed: {str(e)[:50]}")
-                        edit_button = None
-                        continue
-                
-                if not edit_button and attempt < 2:
-                    logger.info("Button not found, waiting 3 seconds and scrolling to top again...")
-                    time.sleep(3)
-                    # Scroll to top (edit button is at top of page)
-                    self.driver.execute_script("window.scrollTo(0, 0);")
-                    time.sleep(2)
-            
-            if not edit_button:
-                # Last resort: JavaScript search (entire page)
-                logger.info("Trying JavaScript to find edit button (searching entire page)...")
-                try:
-                    edit_button = self.driver.execute_script("""
-                        let btn = null;
-                        
-                        // 1. Try data-testid (search entire page)
-                        btn = document.querySelector('button[data-testid="item-edit-button"]');
-                        
-                        // 2. If not found, search all buttons by text (entire page) - Latvian and English
-                        if (!btn) {
-                            let allButtons = Array.from(document.querySelectorAll('button'));
-                            btn = allButtons.find(b => {
-                                let text = (b.textContent || b.innerText || '').trim().toLowerCase();
-                                // Latvian: "rediģēt aprakstu" or "rediģēt"
-                                // English: "edit listing" or "edit"
-                                return text.includes('rediģēt aprakstu') ||
-                                       text.includes('edit listing') ||
-                                       (text.includes('rediģēt') && text.length < 25) ||
-                                       (text.includes('edit') && text.length < 20);
-                            });
-                        }
-                        
-                        // 3. Try exact XPath (if it's actually in aside)
-                        if (!btn) {
-                            try {
-                                btn = document.evaluate(
-                                    '/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]',
-                                    document,
-                                    null,
-                                    XPathResult.FIRST_ORDERED_NODE_TYPE,
-                                    null
-                                ).singleNodeValue;
-                            } catch(e) {}
-                        }
-                        
-                        if (btn) {
-                            // Scroll to it
-                            btn.scrollIntoView({block: 'center', behavior: 'smooth'});
-                        }
-                        
-                        return btn;
-                    """)
-                    if edit_button:
-                        logger.info("✓ Found edit button via JavaScript")
-                        time.sleep(2)  # Wait for scroll
-                except Exception as e:
-                    logger.error(f"JavaScript search failed: {e}")
-            
-            if not edit_button:
-                logger.error("Could not find Edit button on item page")
-                logger.error("Falling back to direct /edit URL navigation...")
-                # Fallback: try direct navigation
-                edit_url = item_url.rstrip('/') + '/edit'
-                self.driver.get(edit_url)
-                time.sleep(3)
-            else:
-                # Click the edit button
-                logger.info("Clicking edit button...")
-                try:
-                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", edit_button)
-                    time.sleep(1)
-                    edit_button.click()
-                    logger.info("✓ Edit button clicked")
-                    time.sleep(4)  # Wait for edit form to load
-                except Exception as e:
-                    logger.warning(f"Normal click failed: {e}, trying JavaScript click...")
-                    self.driver.execute_script("arguments[0].click();", edit_button)
-                    time.sleep(4)
+            # Navigate directly to edit page (item_url + '/edit')
+            edit_url = item_url.rstrip('/') + '/edit'
+            logger.info(f"Navigating directly to edit page: {edit_url}")
+            self.driver.get(edit_url)
             
             # Wait for edit page to load
             WebDriverWait(self.driver, 15).until(
@@ -1063,38 +786,22 @@ class VintedPriceBot:
             )
             time.sleep(3)  # Additional wait for dynamic content
             
-            # Check if we're on the edit page or edit form is visible
+            # DEBUG: Print HTML structure to help locate edit button (check entire page, not just sidebar)
+            # Check if we're on the edit page
             current_url = self.driver.current_url
             logger.info(f"Current URL: {current_url}")
             
-            # Check if we're on edit page OR if price input is visible (edit form opened)
-            on_edit_page = '/edit' in current_url
-            edit_form_visible = False
-            
-            if not on_edit_page:
-                # Check if edit form is visible (might be a modal or same page)
-                try:
-                    price_input = self.driver.find_element(By.CSS_SELECTOR, "input#price[data-testid='price-input--input']")
-                    if price_input and price_input.is_displayed():
-                        edit_form_visible = True
-                        logger.info("✓ Edit form is visible (price input found)")
-                except:
-                    pass
-            
-            if not on_edit_page and not edit_form_visible:
+            if '/edit' not in current_url:
                 # We got redirected - check if it's login page
                 if any(x in current_url for x in ['/login', '/signup', '/signin']):
                     logger.error("⚠️ Redirected to login page - session expired or invalid!")
                     return False
                 else:
-                    logger.error(f"⚠️ Could not access edit page/form - current URL: {current_url}")
+                    logger.error(f"⚠️ Could not access edit page - redirected to: {current_url}")
                     logger.error("This item may not belong to the logged-in account!")
                     return False
             
-            if on_edit_page:
-                logger.info("✓ Successfully accessed edit page")
-            else:
-                logger.info("✓ Edit form opened (button click worked)")
+            logger.info("✓ Successfully accessed edit page")
             
             # Find price input - using exact ID and data-testid
             logger.info("Looking for price input...")
@@ -1158,7 +865,7 @@ class VintedPriceBot:
                 logger.warning("No items found!")
                 return
             
-            # Sync with Google Sheets (returns items and existing_dict for URL lookup)
+            # Sync with Google Sheets
             items, existing_dict = self.sync_with_google_sheets(items)
             
             # Now login for price updates
@@ -1185,57 +892,38 @@ class VintedPriceBot:
                     and not item.get('is_new_discovery', False)  # Skip newly discovered items
                 ]
                 
-                # Count new discoveries that are being skipped
-                new_discoveries = [item for item in items if item.get('is_new_discovery', False)]
-                if new_discoveries:
-                    logger.info(f"🆕 Skipping {len(new_discoveries)} newly discovered items (will update next run)")
-                
-                if items_to_update:
-                    # Get the last item
+                if not items_to_update:
+                    logger.info("No items need price updates")
+                else:
+                    # Get the LAST item that needs updating
                     last_item = items_to_update[-1]
                     
-                    # Skip all except the last
-                    for item in items_to_update[:-1]:
-                        logger.info(f"⏭️  Skipping {item['title']} - test mode (would change €{item['price']} → €{item['new_price']})")
-                    
-                    # Update only the last item
                     logger.info(f"🧪 Testing price update on LAST item: {last_item['title']}")
-                    logger.info(f"   Current price: €{last_item['price']}")
-                    logger.info(f"   New price: €{last_item['new_price']}")
-                    # Ensure percentage is a float for display
+                    logger.info(f"   Current price: €{last_item['price']:.2f}")
+                    logger.info(f"   New price: €{last_item['new_price']:.2f}")
                     percent_value = float(last_item.get('price_change_percent', 0))
                     logger.info(f"   Change: {percent_value:.1f}%")
                     
                     if self.update_item_price(last_item, existing_dict):
                         success_count += 1
-                    
-                    time.sleep(2)
-                else:
-                    logger.info("No items need price changes (excluding new discoveries)")
-                
-                # Log items with no change needed
-                for item in items:
-                    if item['new_price'] == item['price'] and not item.get('is_new_discovery', False):
-                        logger.info(f"Skipping {item['title']} - no price change needed")
                 
                 logger.info("=" * 60)
-                logger.info(f"Bot completed! Updated {success_count}/1 items (test mode)")
-                items_with_changes = len([i for i in items if i['new_price'] != i['price']])
-                logger.info(f"⚠️  TEST MODE: {items_with_changes - success_count} items skipped")
+                logger.info(f"Bot completed! Updated {success_count}/{len(items_to_update) if items_to_update else 0} items (test mode)")
+                logger.info(f"⚠️  TEST MODE: {len(items) - len(items_to_update)} items skipped")
                 logger.info("=" * 60)
             else:
                 logger.info("=" * 60)
                 logger.info("Bot completed! Items synced to Google Sheet (no price updates)")
                 logger.info("=" * 60)
-            
+                
         except Exception as e:
             logger.error(f"Bot execution failed: {e}")
-            raise
-            
+            import traceback
+            logger.error(traceback.format_exc())
         finally:
             if self.driver:
                 self.driver.quit()
-
+                logger.info("WebDriver closed")
 
 if __name__ == "__main__":
     bot = VintedPriceBot()
