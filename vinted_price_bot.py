@@ -920,6 +920,7 @@ class VintedPriceBot:
             logger.info("=" * 60)
             
             # Now try to find edit button on the item page (search entire page, not just sidebar)
+            # Page is in Latvian, so button text is "Rediģēt aprakstu" (Edit listing)
             edit_button = None
             edit_selectors = [
                 # Data-testid selectors (most reliable - works in any language)
