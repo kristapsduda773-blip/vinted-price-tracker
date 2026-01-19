@@ -820,6 +820,92 @@ class VintedPriceBot:
             self.driver.execute_script("window.scrollTo(0, 500);")  # Back to middle where sidebar is
             time.sleep(2)
             
+            # DEBUG: Print HTML structure to help locate edit button
+            logger.info("=" * 60)
+            logger.info("DEBUG: Analyzing HTML structure of item page...")
+            logger.info("=" * 60)
+            try:
+                html_structure = self.driver.execute_script("""
+                    let result = [];
+                    
+                    // Check for aside/sidebar
+                    let aside = document.querySelector('aside');
+                    if (aside) {
+                        result.push('✓ Found <aside> element');
+                        result.push('  Aside HTML structure (first 500 chars):');
+                        result.push(aside.outerHTML.substring(0, 500));
+                        
+                        // Count buttons in aside
+                        let buttons = aside.querySelectorAll('button');
+                        result.push('  Total buttons in aside: ' + buttons.length);
+                        
+                        // List all buttons with their text and data-testid
+                        buttons.forEach((btn, idx) => {
+                            let text = btn.textContent.trim().substring(0, 50);
+                            let testid = btn.getAttribute('data-testid') || '(no testid)';
+                            let classes = btn.className.substring(0, 100);
+                            result.push(`  Button ${idx + 1}: text="${text}", testid="${testid}"`);
+                            result.push(`    Classes: ${classes}`);
+                            if (text.toLowerCase().includes('edit')) {
+                                result.push(`    *** THIS IS AN EDIT BUTTON! ***`);
+                                result.push(`    Full HTML: ${btn.outerHTML.substring(0, 300)}`);
+                            }
+                        });
+                    } else {
+                        result.push('✗ No <aside> element found');
+                    }
+                    
+                    // Check for sidebar by ID
+                    let sidebar = document.getElementById('sidebar');
+                    if (sidebar) {
+                        result.push('✓ Found #sidebar element');
+                    }
+                    
+                    // Try to find edit button by data-testid
+                    let editBtn = document.querySelector('button[data-testid="item-edit-button"]');
+                    if (editBtn) {
+                        result.push('✓ Found button with data-testid="item-edit-button"');
+                        result.push('  HTML: ' + editBtn.outerHTML.substring(0, 400));
+                        result.push('  Visible: ' + (editBtn.offsetParent !== null));
+                        result.push('  Display: ' + window.getComputedStyle(editBtn).display);
+                    } else {
+                        result.push('✗ No button with data-testid="item-edit-button" found');
+                    }
+                    
+                    // Try exact XPath
+                    try {
+                        let xpathBtn = document.evaluate(
+                            '/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]',
+                            document,
+                            null,
+                            XPathResult.FIRST_ORDERED_NODE_TYPE,
+                            null
+                        ).singleNodeValue;
+                        if (xpathBtn) {
+                            result.push('✓ Found button via exact XPath');
+                            result.push('  HTML: ' + xpathBtn.outerHTML.substring(0, 400));
+                        } else {
+                            result.push('✗ Exact XPath did not find button');
+                        }
+                    } catch(e) {
+                        result.push('✗ XPath evaluation failed: ' + e.message);
+                    }
+                    
+                    return result.join('\\n');
+                """)
+                logger.info(f"\n{html_structure}\n")
+            except Exception as e:
+                logger.error(f"Could not analyze HTML structure: {e}")
+                # Fallback: save page source
+                try:
+                    with open('/tmp/item_page_structure.html', 'w', encoding='utf-8') as f:
+                        f.write(self.driver.page_source)
+                    logger.info("Page source saved to /tmp/item_page_structure.html")
+                except:
+                    pass
+            
+            logger.info("=" * 60)
+            
             # Now try to find edit button on the item page
             edit_button = None
             edit_selectors = [
