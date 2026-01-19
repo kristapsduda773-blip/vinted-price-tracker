@@ -363,6 +363,18 @@ class VintedPriceBot:
             current_url = self.driver.current_url
             logger.info(f"After login, current URL: {current_url}")
             
+            # Check and log cookies to verify session is saved
+            try:
+                cookies = self.driver.get_cookies()
+                session_cookies = [c for c in cookies if 'session' in c['name'].lower() or 'auth' in c['name'].lower() or '_vinted' in c['name']]
+                if session_cookies:
+                    logger.info(f"✓ Found {len(session_cookies)} session cookie(s)")
+                else:
+                    logger.warning("⚠️ No session cookies found - login may not persist")
+                    logger.info(f"Total cookies: {len(cookies)}")
+            except Exception as e:
+                logger.warning(f"Could not check cookies: {e}")
+            
             # Check if we're still on login/signup pages
             if any(x in current_url for x in ['/login', '/signup', '/signin']):
                 # Still on login/signup page - check for errors
@@ -419,6 +431,9 @@ class VintedPriceBot:
                     raise Exception("Login failed - form not submitting. This could be: 1) Wrong credentials, 2) Captcha required, 3) Anti-bot detection, 4) Form validation issue")
             else:
                 logger.info("✓ Successfully logged in!")
+                # Wait longer to ensure session cookies are fully set
+                logger.info("Waiting for session to stabilize...")
+                time.sleep(5)
             
         except Exception as e:
             logger.error(f"Failed to login to Vinted: {e}")
@@ -787,10 +802,55 @@ class VintedPriceBot:
             
             logger.info("✓ Profile page accessed successfully")
             
-            # Now navigate to edit page from profile context
+            # Click on the item from profile page to establish proper navigation context
+            item_id = item['id']
+            logger.info(f"Looking for item {item_id} on profile page...")
+            try:
+                # Find the item link on profile page
+                item_link = self.driver.find_element(By.CSS_SELECTOR, f"a[href*='/items/{item_id}']")
+                logger.info(f"Found item link, clicking...")
+                item_link.click()
+                time.sleep(3)  # Wait for item page to load
+                
+                # Verify we're on the item page
+                current_url = self.driver.current_url
+                logger.info(f"Item page URL: {current_url}")
+                
+                if item_id not in current_url:
+                    logger.warning(f"Not on item page, manually navigating to {item_url}")
+                    self.driver.get(item_url)
+                    time.sleep(3)
+            except Exception as e:
+                logger.warning(f"Could not click item from profile: {e}")
+                logger.info(f"Manually navigating to item page: {item_url}")
+                self.driver.get(item_url)
+                time.sleep(3)
+            
+            # Verify cookies are still present before navigating to edit
+            try:
+                cookies = self.driver.get_cookies()
+                session_cookies = [c for c in cookies if 'session' in c['name'].lower() or 'auth' in c['name'].lower() or '_vinted' in c['name']]
+                if session_cookies:
+                    logger.info(f"✓ Session cookies still present ({len(session_cookies)} cookies)")
+                else:
+                    logger.warning("⚠️ Session cookies missing before edit navigation!")
+            except:
+                pass
+            
+            # Now navigate to edit page using JavaScript (preserves session better)
             edit_url = item_url.rstrip('/') + '/edit'
             logger.info(f"Navigating to edit page: {edit_url}")
-            self.driver.get(edit_url)
+            
+            # Try JavaScript navigation first (more seamless)
+            try:
+                self.driver.execute_script(f"window.location.href = '{edit_url}';")
+                logger.info("Navigated via JavaScript")
+            except:
+                # Fallback to normal navigation
+                self.driver.get(edit_url)
+                logger.info("Navigated via driver.get()")
+            
+            time.sleep(3)  # Wait for edit page to load
             
             # Wait for edit page to load
             WebDriverWait(self.driver, 15).until(
