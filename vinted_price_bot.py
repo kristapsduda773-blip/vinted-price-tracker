@@ -240,8 +240,14 @@ class VintedPriceBot:
                 logger.error("Page source saved to /tmp/vinted_login_page.html")
                 raise Exception("Email input not found")
             
+            # Fill email with proper event triggering
             email_input.clear()
             email_input.send_keys(self.vinted_email)
+            # Trigger input and change events
+            self.driver.execute_script("""
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+            """, email_input)
             logger.info("✓ Email entered")
             time.sleep(1)
             
@@ -250,8 +256,23 @@ class VintedPriceBot:
             )
             password_input.clear()
             password_input.send_keys(self.vinted_password)
+            # Trigger input and change events
+            self.driver.execute_script("""
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+            """, password_input)
             logger.info("✓ Password entered")
-            time.sleep(1)
+            time.sleep(2)  # Wait a bit longer for any validation
+            
+            # Check for captcha
+            try:
+                captcha_elements = self.driver.find_elements(By.CSS_SELECTOR, "[class*='captcha'], [id*='captcha'], iframe[src*='captcha'], iframe[src*='recaptcha']")
+                if captcha_elements:
+                    logger.error("⚠️ CAPTCHA detected! Waiting 30 seconds for manual solving...")
+                    logger.error("Please solve the CAPTCHA in the browser if running locally")
+                    time.sleep(30)
+            except:
+                pass
             
             # Store the current URL before submitting
             pre_submit_url = self.driver.current_url
@@ -277,41 +298,58 @@ class VintedPriceBot:
                 logger.error("Could not find submit button")
                 raise Exception("Submit button not found")
             
-            # Click submit and wait for redirect
-            try:
-                submit_button.click()
-                logger.info("Login form submitted via button click")
-            except Exception as e:
-                logger.warning(f"Button click failed: {e}, trying Enter key instead...")
-                # Fallback: press Enter on password field
-                password_input.send_keys(Keys.RETURN)
-                logger.info("Login form submitted via Enter key")
+            # Try multiple submission methods
+            submission_methods = [
+                ("JavaScript form submit", lambda: self.driver.execute_script("""
+                    let form = document.querySelector('form');
+                    if (form) {
+                        form.submit();
+                        return true;
+                    }
+                    return false;
+                """)),
+                ("Button click", lambda: (submit_button.click(), True)[1]),
+                ("JavaScript button click", lambda: (self.driver.execute_script("arguments[0].click();", submit_button), True)[1]),
+                ("Enter key", lambda: (password_input.send_keys(Keys.RETURN), True)[1]),
+            ]
             
-            # Wait for navigation away from signup/login page
-            logger.info("Waiting for redirect after login...")
+            logger.info("Attempting form submission...")
             redirect_success = False
-            try:
-                WebDriverWait(self.driver, 15).until(
-                    lambda d: '/signup' not in d.current_url and '/login' not in d.current_url and d.current_url != pre_submit_url
-                )
-                logger.info(f"✓ Redirected to: {self.driver.current_url}")
-                redirect_success = True
-            except:
-                logger.warning(f"No redirect detected after 15s, still on: {self.driver.current_url}")
-                
-                # Try Enter key as fallback if button click didn't work
-                if self.driver.current_url == pre_submit_url:
-                    logger.info("Trying Enter key on password field as fallback...")
+            
+            for method_name, submit_func in submission_methods:
+                if redirect_success:
+                    break
+                    
+                try:
+                    logger.info(f"Trying: {method_name}")
+                    submit_func()
+                    time.sleep(2)  # Brief wait after submission
+                    
+                    # Check for immediate validation errors
                     try:
-                        password_input.send_keys(Keys.RETURN)
-                        time.sleep(3)
-                        WebDriverWait(self.driver, 10).until(
-                            lambda d: d.current_url != pre_submit_url
-                        )
-                        logger.info(f"✓ Redirected after Enter key: {self.driver.current_url}")
-                        redirect_success = True
+                        errors = self.driver.find_elements(By.CSS_SELECTOR, ".form__error, .error, [class*='error']")
+                        visible_errors = [e.text for e in errors if e.is_displayed() and e.text.strip()]
+                        if visible_errors:
+                            logger.warning(f"Validation errors: {', '.join(visible_errors)}")
+                            continue  # Try next method
                     except:
-                        logger.error("Enter key fallback also failed")
+                        pass
+                    
+                    # Wait for redirect
+                    logger.info(f"Waiting for redirect after {method_name}...")
+                    try:
+                        WebDriverWait(self.driver, 10).until(
+                            lambda d: '/signup' not in d.current_url and '/login' not in d.current_url and d.current_url != pre_submit_url
+                        )
+                        logger.info(f"✓ Redirected to: {self.driver.current_url}")
+                        redirect_success = True
+                        break
+                    except:
+                        logger.warning(f"{method_name} did not trigger redirect")
+                        
+                except Exception as e:
+                    logger.warning(f"{method_name} failed: {e}")
+                    continue
             
             time.sleep(3)  # Additional wait for page to stabilize
             
@@ -324,26 +362,55 @@ class VintedPriceBot:
                 # Still on login/signup page - check for errors
                 logger.error("⚠️ Still on login/signup page after submission!")
                 
+                # Check for error messages
                 try:
-                    error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".form__error, .error, [class*='error']")
-                    if error_elements:
-                        error_text = ' | '.join([el.text for el in error_elements if el.text])
-                        logger.error(f"Login error message: {error_text}")
+                    error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".form__error, .error, [class*='error'], [class*='Error']")
+                    visible_errors = [el.text for el in error_elements if el.is_displayed() and el.text.strip()]
+                    if visible_errors:
+                        logger.error(f"Login error messages: {' | '.join(visible_errors)}")
+                except:
+                    pass
+                
+                # Check form validation state
+                try:
+                    email_input_check = self.driver.find_element(By.CSS_SELECTOR, "input[placeholder*='E-pasta'], input[id='username']")
+                    password_input_check = self.driver.find_element(By.ID, "password")
+                    
+                    email_value = email_input_check.get_attribute('value')
+                    password_value = password_input_check.get_attribute('value')
+                    
+                    logger.error(f"Debug: Email filled: {bool(email_value)}, Password filled: {bool(password_value)}")
+                    logger.error(f"Debug: Email field valid: {email_input_check.get_attribute('aria-invalid') != 'true'}")
+                    logger.error(f"Debug: Password field valid: {password_input_check.get_attribute('aria-invalid') != 'true'}")
+                except Exception as e:
+                    logger.error(f"Could not check form state: {e}")
+                
+                # Check for submit button state
+                try:
+                    if submit_button:
+                        is_disabled = submit_button.get_attribute('disabled')
+                        is_aria_disabled = submit_button.get_attribute('aria-disabled')
+                        logger.error(f"Debug: Submit button disabled: {is_disabled}, aria-disabled: {is_aria_disabled}")
                 except:
                     pass
                 
                 # Debug: Check if form is still visible
                 try:
-                    email_field = self.driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='email']")
-                    password_field = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
-                    logger.error(f"Debug: Email fields found: {len(email_field)}, Password fields: {len(password_field)}")
+                    email_fields = self.driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='email']")
+                    password_fields = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+                    logger.error(f"Debug: Email fields found: {len(email_fields)}, Password fields: {len(password_fields)}")
                 except:
                     pass
                 
                 with open('/tmp/vinted_login_failed.html', 'w', encoding='utf-8') as f:
                     f.write(self.driver.page_source)
                 logger.error("Login verification failed. Page source saved.")
-                raise Exception("Login failed - still on login/signup page. Check credentials or form submission.")
+                
+                # More helpful error message
+                if visible_errors:
+                    raise Exception(f"Login failed with errors: {', '.join(visible_errors)}")
+                else:
+                    raise Exception("Login failed - form not submitting. This could be: 1) Wrong credentials, 2) Captcha required, 3) Anti-bot detection, 4) Form validation issue")
             else:
                 logger.info("✓ Successfully logged in!")
             
