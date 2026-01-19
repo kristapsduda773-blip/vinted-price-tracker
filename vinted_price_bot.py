@@ -834,7 +834,8 @@ class VintedPriceBot:
                         let testid = btn.getAttribute('data-testid') || '';
                         let visible = btn.offsetParent !== null;
                         
-                        if (text.includes('edit') || testid.includes('edit')) {
+                        // Check for English "edit" or Latvian "rediģēt" or testid
+                        if (text.includes('edit') || text.includes('rediģēt') || testid.includes('edit')) {
                             editButtons.push({
                                 index: idx,
                                 text: btn.textContent.trim().substring(0, 60),
@@ -887,7 +888,8 @@ class VintedPriceBot:
                         result.push('Buttons in <main>: ' + mainButtons.length);
                         mainButtons.forEach((btn, idx) => {
                             let text = btn.textContent.trim().toLowerCase();
-                            if (text.includes('edit')) {
+                            // Check for English "edit" or Latvian "rediģēt"
+                            if (text.includes('edit') || text.includes('rediģēt')) {
                                 result.push(`  Main Button ${idx + 1}: "${btn.textContent.trim().substring(0, 50)}"`);
                                 result.push(`    HTML: ${btn.outerHTML.substring(0, 300)}`);
                             }
@@ -920,18 +922,23 @@ class VintedPriceBot:
             # Now try to find edit button on the item page (search entire page, not just sidebar)
             edit_button = None
             edit_selectors = [
-                # Data-testid selectors (search entire page)
+                # Data-testid selectors (most reliable - works in any language)
                 (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
                 (By.XPATH, "//button[@data-testid='item-edit-button']"),
-                # Text-based selectors (search entire page)
+                # Main content area with data-testid
+                (By.XPATH, "//main//button[@data-testid='item-edit-button']"),
+                # Text-based selectors - English
                 (By.XPATH, "//span[contains(text(), 'Edit listing')]/ancestor::button"),
                 (By.XPATH, "//button[.//span[contains(text(), 'Edit listing')]]"),
                 (By.XPATH, "//button[contains(., 'Edit listing')]"),
+                # Text-based selectors - Latvian
+                (By.XPATH, "//span[contains(text(), 'Rediģēt aprakstu')]/ancestor::button"),
+                (By.XPATH, "//button[.//span[contains(text(), 'Rediģēt aprakstu')]]"),
+                (By.XPATH, "//button[contains(., 'Rediģēt')]"),
+                # Generic edit text (any language)
+                (By.XPATH, "//button[.//span[contains(., 'Edit') or contains(., 'Rediģēt')]]"),
                 # User-provided exact XPath (if it's actually in aside)
                 (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
-                # Main content area
-                (By.XPATH, "//main//button[@data-testid='item-edit-button']"),
-                (By.XPATH, "//main//button[contains(., 'Edit')]"),
             ]
             
             # Try finding button with multiple wait strategies
@@ -983,15 +990,19 @@ class VintedPriceBot:
                     edit_button = self.driver.execute_script("""
                         let btn = null;
                         
-                        // 1. Try data-testid (search entire page)
+                        // 1. Try data-testid (search entire page) - most reliable, language-independent
                         btn = document.querySelector('button[data-testid="item-edit-button"]');
                         
-                        // 2. If not found, search all buttons by text (entire page)
+                        // 2. If not found, search all buttons by text (entire page) - check both English and Latvian
                         if (!btn) {
                             let allButtons = Array.from(document.querySelectorAll('button'));
                             btn = allButtons.find(b => {
                                 let text = (b.textContent || b.innerText || '').trim().toLowerCase();
+                                // English: "edit listing"
+                                // Latvian: "rediģēt aprakstu"
                                 return text.includes('edit listing') || 
+                                       text.includes('rediģēt aprakstu') ||
+                                       text.includes('rediģēt') ||
                                        (text.includes('edit') && text.length < 20);
                             });
                         }
