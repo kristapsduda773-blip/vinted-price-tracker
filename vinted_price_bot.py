@@ -826,31 +826,96 @@ class VintedPriceBot:
                 self.driver.get(item_url)
                 time.sleep(3)
             
-            # Verify cookies are still present before navigating to edit
+            # Verify cookies are still present
             try:
                 cookies = self.driver.get_cookies()
                 session_cookies = [c for c in cookies if 'session' in c['name'].lower() or 'auth' in c['name'].lower() or '_vinted' in c['name']]
                 if session_cookies:
                     logger.info(f"✓ Session cookies still present ({len(session_cookies)} cookies)")
                 else:
-                    logger.warning("⚠️ Session cookies missing before edit navigation!")
+                    logger.warning("⚠️ Session cookies missing!")
             except:
                 pass
             
-            # Now navigate to edit page using JavaScript (preserves session better)
-            edit_url = item_url.rstrip('/') + '/edit'
-            logger.info(f"Navigating to edit page: {edit_url}")
+            # Instead of navigating to /edit, stay on item page and find edit button
+            # This avoids triggering Vinted's anti-automation on /edit URLs
+            logger.info("Staying on item page and looking for Edit button...")
             
-            # Try JavaScript navigation first (more seamless)
-            try:
-                self.driver.execute_script(f"window.location.href = '{edit_url}';")
-                logger.info("Navigated via JavaScript")
-            except:
-                # Fallback to normal navigation
+            # Wait longer for page to fully render (items load lazily)
+            time.sleep(5)
+            
+            # Scroll to ensure all content is loaded
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(2)
+            
+            # Now try to find edit button on the item page
+            edit_button = None
+            edit_selectors = [
+                (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
+                (By.XPATH, "//button[@data-testid='item-edit-button']"),
+                (By.XPATH, "//span[contains(text(), 'Edit listing')]/ancestor::button"),
+                (By.XPATH, "//button[.//span[contains(text(), 'Edit listing')]]"),
+                (By.CSS_SELECTOR, "#sidebar button[data-testid='item-edit-button']"),
+                (By.XPATH, "//aside//button[contains(., 'Edit')]"),
+            ]
+            
+            for by_type, selector in edit_selectors:
+                try:
+                    logger.info(f"Trying edit button selector: {selector}")
+                    edit_button = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((by_type, selector))
+                    )
+                    if edit_button and edit_button.is_displayed():
+                        logger.info(f"✓ Found edit button with: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not edit_button:
+                # Last resort: JavaScript search
+                logger.info("Trying JavaScript to find edit button...")
+                try:
+                    edit_button = self.driver.execute_script("""
+                        // Try data-testid first
+                        let btn = document.querySelector('button[data-testid="item-edit-button"]');
+                        if (!btn) {
+                            // Find by text
+                            let buttons = Array.from(document.querySelectorAll('button'));
+                            btn = buttons.find(b => {
+                                let text = b.textContent || b.innerText || '';
+                                return text.toLowerCase().includes('edit listing') || 
+                                       text.toLowerCase().includes('edit');
+                            });
+                        }
+                        return btn;
+                    """)
+                    if edit_button:
+                        logger.info("✓ Found edit button via JavaScript")
+                except Exception as e:
+                    logger.error(f"JavaScript search failed: {e}")
+            
+            if not edit_button:
+                logger.error("Could not find Edit button on item page")
+                logger.error("Falling back to direct /edit URL navigation...")
+                # Fallback: try direct navigation
+                edit_url = item_url.rstrip('/') + '/edit'
                 self.driver.get(edit_url)
-                logger.info("Navigated via driver.get()")
-            
-            time.sleep(3)  # Wait for edit page to load
+                time.sleep(3)
+            else:
+                # Click the edit button
+                logger.info("Clicking edit button...")
+                try:
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", edit_button)
+                    time.sleep(1)
+                    edit_button.click()
+                    logger.info("✓ Edit button clicked")
+                    time.sleep(4)  # Wait for edit form to load
+                except Exception as e:
+                    logger.warning(f"Normal click failed: {e}, trying JavaScript click...")
+                    self.driver.execute_script("arguments[0].click();", edit_button)
+                    time.sleep(4)
             
             # Wait for edit page to load
             WebDriverWait(self.driver, 15).until(
@@ -858,21 +923,38 @@ class VintedPriceBot:
             )
             time.sleep(3)  # Additional wait for dynamic content
             
-            # Check if we're on the edit page
+            # Check if we're on the edit page or edit form is visible
             current_url = self.driver.current_url
             logger.info(f"Current URL: {current_url}")
             
-            if '/edit' not in current_url:
+            # Check if we're on edit page OR if price input is visible (edit form opened)
+            on_edit_page = '/edit' in current_url
+            edit_form_visible = False
+            
+            if not on_edit_page:
+                # Check if edit form is visible (might be a modal or same page)
+                try:
+                    price_input = self.driver.find_element(By.CSS_SELECTOR, "input#price[data-testid='price-input--input']")
+                    if price_input and price_input.is_displayed():
+                        edit_form_visible = True
+                        logger.info("✓ Edit form is visible (price input found)")
+                except:
+                    pass
+            
+            if not on_edit_page and not edit_form_visible:
                 # We got redirected - check if it's login page
                 if any(x in current_url for x in ['/login', '/signup', '/signin']):
                     logger.error("⚠️ Redirected to login page - session expired or invalid!")
                     return False
                 else:
-                    logger.error(f"⚠️ Could not access edit page - redirected to: {current_url}")
+                    logger.error(f"⚠️ Could not access edit page/form - current URL: {current_url}")
                     logger.error("This item may not belong to the logged-in account!")
                     return False
             
-            logger.info("✓ Successfully accessed edit page")
+            if on_edit_page:
+                logger.info("✓ Successfully accessed edit page")
+            else:
+                logger.info("✓ Edit form opened (button click worked)")
             
             # Find price input - using exact ID and data-testid
             logger.info("Looking for price input...")
