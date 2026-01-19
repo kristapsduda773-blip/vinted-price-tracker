@@ -754,172 +754,40 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
-            # Verify we're still logged in by checking profile link
-            try:
-                self.driver.get("https://www.vinted.lv")
-                time.sleep(2)
-                # Look for user menu/profile indicator
-                user_menu = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/member/']")
-                if not user_menu:
-                    logger.warning("⚠️ Not logged in! Attempting to re-login...")
-                    self.login_to_vinted()
-                else:
-                    logger.info("✓ Login session active")
-            except Exception as e:
-                logger.warning(f"Could not verify login status: {e}")
-            
-            # Navigate to item page
-            self.driver.get(item_url)
+            # Try going directly to the edit page (skip finding button)
+            edit_url = item_url.rstrip('/') + '/edit'
+            logger.info(f"Navigating directly to edit page: {edit_url}")
+            self.driver.get(edit_url)
             
             # Wait for page to be ready
             WebDriverWait(self.driver, 15).until(
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
             time.sleep(3)  # Additional wait for dynamic content
-            logger.info("Page loaded successfully")
             
-            # Close any modals/overlays that might block the button
-            try:
-                # Try to close modal overlay
-                overlay = self.driver.find_element(By.CSS_SELECTOR, "div[data-testid*='modal'], div.ReactModal__Overlay")
-                self.driver.execute_script("arguments[0].remove();", overlay)
-                logger.info("Closed modal overlay")
-                time.sleep(1)
-            except:
-                pass
+            # Check if we're on the edit page or got redirected
+            current_url = self.driver.current_url
+            logger.info(f"Current URL: {current_url}")
             
-            # Click "Edit listing" button - try multiple approaches
-            logger.info("Looking for 'Edit listing' button...")
-            edit_button = None
+            if '/edit' not in current_url:
+                # We got redirected - probably not logged in or not our item
+                if any(x in current_url for x in ['/login', '/signup', '/signin']):
+                    logger.error("⚠️ Redirected to login page - session expired!")
+                    logger.error("Attempting to re-login...")
+                    self.login_to_vinted()
+                    # Try edit page again
+                    self.driver.get(edit_url)
+                    time.sleep(3)
+                    current_url = self.driver.current_url
+                    if '/edit' not in current_url:
+                        logger.error("Still can't access edit page after re-login")
+                        return False
+                else:
+                    logger.error(f"⚠️ Cannot access edit page - redirected to: {current_url}")
+                    logger.error("This item may not belong to the logged-in account!")
+                    return False
             
-            # Try multiple selectors and scrolling strategies
-            selectors = [
-                (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
-                (By.XPATH, "//button[@data-testid='item-edit-button']"),
-                # User-provided selectors
-                (By.CSS_SELECTOR, "#sidebar > div.item-page-sidebar-content > div:nth-child(1) > div > div > div > div > div > div.details-list__info > div.details-list__item.details-list--actions > div.u-grid.u-gap-regular > button:nth-child(5)"),
-                (By.XPATH, "//*[@id='sidebar']/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
-                (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
-                # Generic selectors
-                (By.XPATH, "//span[contains(text(), 'Edit listing')]/parent::button"),
-                (By.XPATH, "//button[contains(., 'Edit listing')]"),
-                (By.XPATH, "//span[text()='Edit listing']/ancestor::button"),
-            ]
-            
-            # First scroll to top
-            self.driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(2)
-            
-            for by_type, selector in selectors:
-                try:
-                    logger.info(f"Trying selector: {selector}")
-                    edit_button = WebDriverWait(self.driver, 5).until(
-                        EC.presence_of_element_located((by_type, selector))
-                    )
-                    # Check if button is visible
-                    if edit_button.is_displayed():
-                        logger.info(f"✓ Found visible button with: {selector}")
-                        break
-                    else:
-                        logger.info(f"Button found but not visible, trying next selector...")
-                        edit_button = None
-                except Exception as e:
-                    logger.info(f"Selector failed: {str(e)[:50]}")
-                    pass
-            
-            # If not found at top, scroll down in increments
-            if not edit_button:
-                logger.info("Button not found at top, scrolling down...")
-                for scroll_position in [300, 600, 900, 1200, 1500]:
-                    logger.info(f"Scrolling to position {scroll_position}...")
-                    self.driver.execute_script(f"window.scrollTo({{top: {scroll_position}, behavior: 'smooth'}});")
-                    time.sleep(2)  # Wait for scroll and content load
-                    
-                    for by_type, selector in selectors:
-                        try:
-                            edit_button = self.driver.find_element(by_type, selector)
-                            if edit_button and edit_button.is_displayed():
-                                logger.info(f"✓ Found visible button at scroll position {scroll_position} with: {selector}")
-                                break
-                            else:
-                                edit_button = None
-                        except:
-                            pass
-                    
-                    if edit_button:
-                        break
-            
-            # Last resort: use JavaScript to find the button
-            if not edit_button:
-                logger.info("Trying JavaScript to find button...")
-                try:
-                    # Try data-testid first
-                    edit_button = self.driver.execute_script("""
-                        let btn = document.querySelector('button[data-testid="item-edit-button"]');
-                        if (!btn) {
-                            // Try finding by text content
-                            let allButtons = Array.from(document.querySelectorAll('button'));
-                            btn = allButtons.find(b => {
-                                let span = b.querySelector('span.web_ui__Button__label');
-                                return span && span.textContent.trim() === 'Edit listing';
-                            });
-                        }
-                        return btn;
-                    """)
-                    if edit_button:
-                        logger.info("✓ Found button via JavaScript (by text content)")
-                except Exception as e:
-                    logger.error(f"JavaScript search failed: {e}")
-            
-            if not edit_button:
-                logger.error("Could not find Edit listing button")
-                
-                # Debug: List all buttons on page
-                try:
-                    all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
-                    logger.error(f"Found {len(all_buttons)} total buttons on page:")
-                    
-                    # Check for any buttons with "Edit" text
-                    edit_buttons = [b for b in all_buttons if 'edit' in b.text.lower()]
-                    if edit_buttons:
-                        logger.error(f"Found {len(edit_buttons)} buttons with 'edit' in text:")
-                        for i, btn in enumerate(edit_buttons):
-                            btn_text = btn.text[:80] if btn.text else "(no text)"
-                            testid = btn.get_attribute('data-testid') or "(no testid)"
-                            logger.error(f"  Edit Button {i+1}: text='{btn_text}', testid='{testid}'")
-                    else:
-                        logger.error("⚠️ NO BUTTONS WITH 'EDIT' TEXT FOUND - User likely not logged in!")
-                    
-                    # Show first 10 buttons
-                    for i, btn in enumerate(all_buttons[:10]):
-                        btn_text = btn.text[:50] if btn.text else "(no text)"
-                        testid = btn.get_attribute('data-testid') or "(no testid)"
-                        logger.error(f"  Button {i+1}: text='{btn_text}', testid='{testid}'")
-                except Exception as e:
-                    logger.error(f"Could not list buttons: {e}")
-                
-                # Save screenshot for debugging
-                try:
-                    self.driver.save_screenshot(f'/tmp/no_edit_button_{item["id"]}.png')
-                    logger.info(f"Screenshot saved for item {item['id']}")
-                except:
-                    pass
-                return False
-            
-            # Scroll button into view and click
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", edit_button)
-            time.sleep(1)
-            
-            # Try clicking, use JavaScript if normal click fails
-            try:
-                edit_button.click()
-                logger.info("Edit listing button clicked")
-            except:
-                logger.warning("Normal click failed, using JavaScript click...")
-                self.driver.execute_script("arguments[0].click();", edit_button)
-                logger.info("Edit listing button clicked via JavaScript")
-            
-            time.sleep(4)  # Wait for edit form to load
+            logger.info("✓ On edit page successfully")
             
             # Find price input - using exact ID and data-testid
             logger.info("Looking for price input...")
