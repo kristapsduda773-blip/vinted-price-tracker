@@ -49,6 +49,12 @@ class VintedPriceBot:
         self.google_creds_path = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON', './service_account.json')
         self.default_percent = float(os.getenv('DEFAULT_PRICE_CHANGE_PERCENT', '-2'))  # Negative to LOWER prices
         
+        # Extract profile ID from URL (e.g., "https://www.vinted.lv/member/295252411" -> "295252411")
+        if self.vinted_profile_url:
+            self.profile_id = self.vinted_profile_url.rstrip('/').split('/')[-1]
+        else:
+            self.profile_id = None
+        
         self.driver = None
         self.sheet = None
         
@@ -754,23 +760,36 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
-            # Verify we're still logged in by checking profile link
-            try:
-                self.driver.get("https://www.vinted.lv")
-                time.sleep(2)
-                # Look for user menu/profile indicator
-                user_menu = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/member/']")
-                if not user_menu:
-                    logger.warning("⚠️ Not logged in! Attempting to re-login...")
-                    self.login_to_vinted()
-                else:
-                    logger.info("✓ Login session active")
-            except Exception as e:
-                logger.warning(f"Could not verify login status: {e}")
+            # Navigate through profile page first to establish session context
+            # This is the user's workaround: go to profile page, then to edit
+            profile_url = f"https://www.vinted.lv/member/{self.profile_id}"
+            logger.info(f"Navigating to profile page first: {profile_url}")
+            self.driver.get(profile_url)
             
-            # Navigate directly to edit page (skip finding button)
+            # Wait for profile page to load
+            time.sleep(3)
+            
+            # Verify we're on profile page and logged in
+            current_url = self.driver.current_url
+            logger.info(f"Profile page URL: {current_url}")
+            
+            if any(x in current_url for x in ['/login', '/signup', '/signin']):
+                logger.error("⚠️ Redirected to login from profile page - session invalid!")
+                logger.error("Attempting to re-login...")
+                self.login_to_vinted()
+                # Try profile again
+                self.driver.get(profile_url)
+                time.sleep(3)
+                current_url = self.driver.current_url
+                if any(x in current_url for x in ['/login', '/signup', '/signin']):
+                    logger.error("Still can't access profile after re-login")
+                    return False
+            
+            logger.info("✓ Profile page accessed successfully")
+            
+            # Now navigate to edit page from profile context
             edit_url = item_url.rstrip('/') + '/edit'
-            logger.info(f"Navigating directly to edit page: {edit_url}")
+            logger.info(f"Navigating to edit page: {edit_url}")
             self.driver.get(edit_url)
             
             # Wait for edit page to load
