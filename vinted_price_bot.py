@@ -653,10 +653,41 @@ class VintedPriceBot:
         if not new_items and not removed_item_ids:
             logger.info("ℹ️  No new or removed items")
         
-        # Prepare updated data
-        updated_rows = [['Item ID', 'URL', 'Title', 'Current Price', 'New Price', 'Floor Price', 'Price Change %', 'Status', 'Last Updated']]
+        # Get all existing rows to find row numbers for updates
+        try:
+            all_values = self.sheet.get_all_values()
+            header_row_idx = None
+            for idx, row in enumerate(all_values):
+                if 'Item ID' in row:
+                    header_row_idx = idx
+                    break
+            
+            if header_row_idx is None:
+                # No header found, need to create sheet from scratch
+                logger.info("No header found, creating new sheet...")
+                self.sheet.clear()
+                header = ['Item ID', 'URL', 'Title', 'Current Price', 'New Price', 'Floor Price', 'Price Change %', 'Status', 'Last Updated']
+                self.sheet.update(values=[header], range_name='A1')
+                header_row_idx = 0
+                existing_row_map = {}  # item_id -> row_number (1-based, including header)
+            else:
+                # Map existing item IDs to their row numbers (1-based, including header)
+                headers = all_values[header_row_idx]
+                item_id_col = headers.index('Item ID') if 'Item ID' in headers else 0
+                existing_row_map = {}
+                for idx, row in enumerate(all_values[header_row_idx + 1:], start=header_row_idx + 2):  # +2 because 1-based and skip header
+                    if len(row) > item_id_col and row[item_id_col]:
+                        existing_row_map[str(row[item_id_col])] = idx
+        except Exception as e:
+            logger.warning(f"Could not read existing rows: {e}")
+            existing_row_map = {}
+            header_row_idx = 0
         
-        # Add current items from Vinted (active items)
+        # Process items: update existing rows or prepare new rows
+        rows_to_update = {}  # row_number -> row_data
+        new_rows_to_append = []  # List of new rows to append
+        
+        # Process current items from Vinted
         for item in items:
             item_id = item['id']
             current_price = item['price']
@@ -708,44 +739,91 @@ class VintedPriceBot:
             item['floor_price'] = floor_price if floor_price is not None else ''
             item['is_new_discovery'] = is_new_item  # Flag for later use
             
-            updated_rows.append([
+            row_data = [
                 item_id,
-                item.get('url', ''),  # Add URL column
+                item.get('url', ''),
                 item['title'],
                 current_price,
                 new_price,
-                floor_price if floor_price is not None else '',  # Floor Price first
-                price_change_percent if not is_new_item else self.default_percent,  # Price Change % second
+                floor_price if floor_price is not None else '',
+                price_change_percent if not is_new_item else self.default_percent,
                 status,
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            ])
+            ]
+            
+            # If item exists in sheet, update that row; otherwise, append new row
+            if item_id in existing_row_map:
+                rows_to_update[existing_row_map[item_id]] = row_data
+            else:
+                new_rows_to_append.append(row_data)
         
-        # Add removed items at the bottom (marked as sold/removed)
+        # Process removed items - update their status to sold/removed
         for item_id in removed_item_ids:
             if item_id in existing_dict:
                 old_data = existing_dict[item_id]
-                updated_rows.append([
-                    item_id,
-                    old_data.get('URL', ''),  # Keep URL if it exists
-                    old_data.get('Title', 'Unknown'),
-                    old_data.get('Current Price', 0),
-                    old_data.get('New Price', 0),
-                    old_data.get('Floor Price', ''),  # Floor Price first
-                    0,  # Set Price Change % to 0 for sold items
-                    '❌ Sold/Removed',
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                ])
+                if item_id in existing_row_map:
+                    # Update existing row to mark as sold
+                    rows_to_update[existing_row_map[item_id]] = [
+                        item_id,
+                        old_data.get('URL', ''),
+                        old_data.get('Title', 'Unknown'),
+                        old_data.get('Current Price', 0),
+                        old_data.get('New Price', 0),
+                        old_data.get('Floor Price', ''),
+                        0,  # Set Price Change % to 0 for sold items
+                        '❌ Sold/Removed',
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    ]
         
-        # Update entire sheet
-        self.sheet.clear()
-        self.sheet.update('A1:I' + str(len(updated_rows)), updated_rows)
+        # Update existing rows in batches
+        if rows_to_update:
+            logger.info(f"Updating {len(rows_to_update)} existing rows...")
+            # Group updates by ranges for efficiency
+            sorted_rows = sorted(rows_to_update.items())
+            for row_num, row_data in sorted_rows:
+                range_name = f'A{row_num}:I{row_num}'
+                self.sheet.update(values=[row_data], range_name=range_name)
         
-        # Format the sheet
-        # No formatting needed - sheet is managed as a table
-        logger.info("✓ Sheet data updated (table format applied)")
+        # Append new rows
+        if new_rows_to_append:
+            logger.info(f"Appending {len(new_rows_to_append)} new rows...")
+            # Find the last row
+            try:
+                all_values = self.sheet.get_all_values()
+                last_row = len(all_values)
+            except:
+                last_row = 1  # Header row
+            
+            # Append all new rows at once
+            range_name = f'A{last_row + 1}:I{last_row + len(new_rows_to_append)}'
+            self.sheet.update(values=new_rows_to_append, range_name=range_name)
+        
+        # Format sold/removed items in red
+        if removed_item_ids:
+            logger.info(f"Formatting {len(removed_item_ids)} sold items in red...")
+            try:
+                for item_id in removed_item_ids:
+                    if item_id in existing_row_map:
+                        row_num = existing_row_map[item_id]
+                        # Format entire row in red with strikethrough
+                        self.sheet.format(f'A{row_num}:I{row_num}', {
+                            'backgroundColor': {'red': 1.0, 'green': 0.8, 'blue': 0.8},  # Light red
+                            'textFormat': {
+                                'strikethrough': True,
+                                'foregroundColor': {'red': 0.6, 'green': 0.0, 'blue': 0.0}  # Dark red text
+                            }
+                        })
+            except Exception as e:
+                logger.warning(f"Could not format sold items: {e}")
+        
+        logger.info("✓ Sheet data updated (only new rows added, existing rows updated)")
         
         # Count new discoveries
         new_discovery_count = len([i for i in items if i.get('is_new_discovery', False)])
+        
+        # Calculate total rows in sheet
+        total_rows = len(existing_row_map) + len(new_rows_to_append)  # Existing + new
+        # Removed items are already in existing_row_map, so they're counted
         
         logger.info(f"📊 Google Sheets updated:")
         logger.info(f"   Active items: {len(items)}")
@@ -753,7 +831,7 @@ class VintedPriceBot:
             logger.info(f"   🆕 New discoveries: {new_discovery_count}")
         if removed_item_ids:
             logger.info(f"   🗑️  Removed items: {len(removed_item_ids)}")
-        logger.info(f"   Total rows: {len(updated_rows) - 1}")
+        logger.info(f"   Total rows in sheet: {total_rows}")
         
         return items, existing_dict
         
@@ -775,8 +853,20 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
-            # First navigate to item page to establish session context
-            logger.info(f"Navigating to item page first: {item_url}")
+            # Establish session by navigating to homepage first
+            logger.info("Navigating to homepage to establish session...")
+            self.driver.get("https://www.vinted.lv")
+            time.sleep(2)
+            
+            # Verify we're logged in (not redirected to login)
+            current_url = self.driver.current_url
+            if any(x in current_url for x in ['/login', '/signup', '/signin']):
+                logger.error("⚠️ Session lost - redirected to login from homepage!")
+                return False
+            logger.info("✓ Session verified on homepage")
+            
+            # Now navigate to item page
+            logger.info(f"Navigating to item page: {item_url}")
             self.driver.get(item_url)
             time.sleep(3)  # Wait for item page to load
             
@@ -785,12 +875,13 @@ class VintedPriceBot:
             if any(x in current_url for x in ['/login', '/signup', '/signin']):
                 logger.error("⚠️ Redirected to login from item page - session invalid!")
                 return False
+            logger.info("✓ Item page loaded successfully")
             
-            # Now navigate to edit page using JavaScript (preserves session better)
+            # Now navigate to edit page using normal navigation (not JavaScript)
             edit_url = item_url.rstrip('/') + '/edit'
-            logger.info(f"Navigating to edit page via JavaScript: {edit_url}")
-            self.driver.execute_script(f"window.location.href = '{edit_url}';")
-            time.sleep(2)  # Brief wait for navigation
+            logger.info(f"Navigating to edit page: {edit_url}")
+            self.driver.get(edit_url)
+            time.sleep(2)  # Wait for navigation
             
             # Wait for edit page to load
             WebDriverWait(self.driver, 15).until(
