@@ -841,58 +841,132 @@ class VintedPriceBot:
             # This avoids triggering Vinted's anti-automation on /edit URLs
             logger.info("Staying on item page and looking for Edit button...")
             
-            # Wait longer for page to fully render (items load lazily)
-            time.sleep(5)
+            # Wait for page to be fully ready
+            WebDriverWait(self.driver, 15).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            time.sleep(5)  # Additional wait for dynamic content
             
-            # Scroll to ensure all content is loaded
+            # Scroll to sidebar area where edit button is located
+            logger.info("Scrolling to sidebar area...")
+            try:
+                # Find sidebar and scroll to it
+                sidebar = self.driver.find_element(By.CSS_SELECTOR, "aside, #sidebar")
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'start', behavior: 'smooth'});", sidebar)
+                time.sleep(3)
+            except:
+                # Fallback: scroll to middle of page (sidebar is usually on the right)
+                self.driver.execute_script("window.scrollTo(0, 500);")
+                time.sleep(2)
+            
+            # Also scroll to top and bottom to trigger lazy loading
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(1)
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
-            self.driver.execute_script("window.scrollTo(0, 0);")
+            self.driver.execute_script("window.scrollTo(0, 500);")  # Back to middle where sidebar is
             time.sleep(2)
             
             # Now try to find edit button on the item page
             edit_button = None
             edit_selectors = [
+                # User-provided exact XPath (most reliable)
+                (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
+                # Data-testid selectors
                 (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
                 (By.XPATH, "//button[@data-testid='item-edit-button']"),
+                # Sidebar-specific selectors
+                (By.XPATH, "//aside//button[@data-testid='item-edit-button']"),
+                (By.CSS_SELECTOR, "#sidebar button[data-testid='item-edit-button']"),
+                # Text-based selectors
                 (By.XPATH, "//span[contains(text(), 'Edit listing')]/ancestor::button"),
                 (By.XPATH, "//button[.//span[contains(text(), 'Edit listing')]]"),
-                (By.CSS_SELECTOR, "#sidebar button[data-testid='item-edit-button']"),
                 (By.XPATH, "//aside//button[contains(., 'Edit')]"),
             ]
             
-            for by_type, selector in edit_selectors:
-                try:
-                    logger.info(f"Trying edit button selector: {selector}")
-                    edit_button = WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((by_type, selector))
-                    )
-                    if edit_button and edit_button.is_displayed():
-                        logger.info(f"✓ Found edit button with: {selector}")
-                        break
-                except:
-                    continue
+            # Try finding button with multiple wait strategies
+            for attempt in range(3):  # Try 3 times
+                if edit_button:
+                    break
+                    
+                logger.info(f"Attempt {attempt + 1}/3 to find edit button...")
+                
+                for by_type, selector in edit_selectors:
+                    try:
+                        logger.info(f"  Trying selector: {selector[:80]}...")
+                        # Try presence first, then clickable
+                        edit_button = WebDriverWait(self.driver, 8).until(
+                            EC.presence_of_element_located((by_type, selector))
+                        )
+                        
+                        # Check if visible
+                        if edit_button and edit_button.is_displayed():
+                            # Scroll to it
+                            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});", edit_button)
+                            time.sleep(1)
+                            
+                            # Verify it's still there and clickable
+                            if WebDriverWait(self.driver, 3).until(EC.element_to_be_clickable((by_type, selector))):
+                                logger.info(f"✓ Found visible and clickable edit button with: {selector[:80]}")
+                                break
+                            else:
+                                edit_button = None
+                        else:
+                            logger.info(f"  Button found but not visible")
+                            edit_button = None
+                    except Exception as e:
+                        logger.info(f"  Selector failed: {str(e)[:50]}")
+                        edit_button = None
+                        continue
+                
+                if not edit_button and attempt < 2:
+                    logger.info("Button not found, waiting 3 seconds and scrolling again...")
+                    time.sleep(3)
+                    # Scroll again
+                    self.driver.execute_script("window.scrollTo(0, 500);")
+                    time.sleep(2)
             
             if not edit_button:
-                # Last resort: JavaScript search
+                # Last resort: JavaScript search with exact path
                 logger.info("Trying JavaScript to find edit button...")
                 try:
                     edit_button = self.driver.execute_script("""
-                        // Try data-testid first
-                        let btn = document.querySelector('button[data-testid="item-edit-button"]');
+                        // Try exact XPath structure first
+                        let btn = document.evaluate(
+                            '/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]',
+                            document,
+                            null,
+                            XPathResult.FIRST_ORDERED_NODE_TYPE,
+                            null
+                        ).singleNodeValue;
+                        
                         if (!btn) {
-                            // Find by text
-                            let buttons = Array.from(document.querySelectorAll('button'));
-                            btn = buttons.find(b => {
-                                let text = b.textContent || b.innerText || '';
-                                return text.toLowerCase().includes('edit listing') || 
-                                       text.toLowerCase().includes('edit');
-                            });
+                            // Try data-testid
+                            btn = document.querySelector('button[data-testid="item-edit-button"]');
                         }
+                        
+                        if (!btn) {
+                            // Find by text in sidebar
+                            let aside = document.querySelector('aside');
+                            if (aside) {
+                                let buttons = Array.from(aside.querySelectorAll('button'));
+                                btn = buttons.find(b => {
+                                    let text = b.textContent || b.innerText || '';
+                                    return text.toLowerCase().includes('edit listing');
+                                });
+                            }
+                        }
+                        
+                        if (btn) {
+                            // Scroll to it
+                            btn.scrollIntoView({block: 'center', behavior: 'smooth'});
+                        }
+                        
                         return btn;
                     """)
                     if edit_button:
                         logger.info("✓ Found edit button via JavaScript")
+                        time.sleep(2)  # Wait for scroll
                 except Exception as e:
                     logger.error(f"JavaScript search failed: {e}")
             
