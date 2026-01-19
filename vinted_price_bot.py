@@ -800,95 +800,106 @@ class VintedPriceBot:
             )
             time.sleep(5)  # Additional wait for dynamic content
             
-            # Scroll to sidebar area where edit button is located
-            logger.info("Scrolling to sidebar area...")
-            try:
-                # Find sidebar and scroll to it
-                sidebar = self.driver.find_element(By.CSS_SELECTOR, "aside, #sidebar")
-                self.driver.execute_script("arguments[0].scrollIntoView({block: 'start', behavior: 'smooth'});", sidebar)
-                time.sleep(3)
-            except:
-                # Fallback: scroll to middle of page (sidebar is usually on the right)
-                self.driver.execute_script("window.scrollTo(0, 500);")
-                time.sleep(2)
-            
-            # Also scroll to top and bottom to trigger lazy loading
+            # Scroll to top first (edit button is at top of page, not sidebar)
+            logger.info("Scrolling to top of page (edit button location)...")
             self.driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(1)
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-            self.driver.execute_script("window.scrollTo(0, 500);")  # Back to middle where sidebar is
             time.sleep(2)
             
-            # DEBUG: Print HTML structure to help locate edit button
+            # Also scroll through page to trigger lazy loading
+            self.driver.execute_script("window.scrollTo(0, 300);")
+            time.sleep(1)
+            self.driver.execute_script("window.scrollTo(0, 600);")
+            time.sleep(1)
+            self.driver.execute_script("window.scrollTo(0, 0);")  # Back to top
+            time.sleep(2)
+            
+            # DEBUG: Print HTML structure to help locate edit button (check entire page, not just sidebar)
             logger.info("=" * 60)
-            logger.info("DEBUG: Analyzing HTML structure of item page...")
+            logger.info("DEBUG: Analyzing HTML structure of item page (checking entire page)...")
             logger.info("=" * 60)
             try:
                 html_structure = self.driver.execute_script("""
                     let result = [];
                     
-                    // Check for aside/sidebar
-                    let aside = document.querySelector('aside');
-                    if (aside) {
-                        result.push('✓ Found <aside> element');
-                        result.push('  Aside HTML structure (first 500 chars):');
-                        result.push(aside.outerHTML.substring(0, 500));
+                    // Search ENTIRE PAGE for edit button
+                    result.push('=== SEARCHING ENTIRE PAGE FOR EDIT BUTTON ===');
+                    
+                    // 1. Search all buttons on page
+                    let allButtons = document.querySelectorAll('button');
+                    result.push('Total buttons on entire page: ' + allButtons.length);
+                    
+                    let editButtons = [];
+                    allButtons.forEach((btn, idx) => {
+                        let text = btn.textContent.trim().toLowerCase();
+                        let testid = btn.getAttribute('data-testid') || '';
+                        let visible = btn.offsetParent !== null;
                         
-                        // Count buttons in aside
-                        let buttons = aside.querySelectorAll('button');
-                        result.push('  Total buttons in aside: ' + buttons.length);
-                        
-                        // List all buttons with their text and data-testid
-                        buttons.forEach((btn, idx) => {
-                            let text = btn.textContent.trim().substring(0, 50);
-                            let testid = btn.getAttribute('data-testid') || '(no testid)';
-                            let classes = btn.className.substring(0, 100);
-                            result.push(`  Button ${idx + 1}: text="${text}", testid="${testid}"`);
-                            result.push(`    Classes: ${classes}`);
-                            if (text.toLowerCase().includes('edit')) {
-                                result.push(`    *** THIS IS AN EDIT BUTTON! ***`);
-                                result.push(`    Full HTML: ${btn.outerHTML.substring(0, 300)}`);
-                            }
+                        if (text.includes('edit') || testid.includes('edit')) {
+                            editButtons.push({
+                                index: idx,
+                                text: btn.textContent.trim().substring(0, 60),
+                                testid: testid,
+                                visible: visible,
+                                html: btn.outerHTML.substring(0, 400),
+                                location: 'unknown'
+                            });
+                        }
+                    });
+                    
+                    if (editButtons.length > 0) {
+                        result.push('\\n*** FOUND ' + editButtons.length + ' EDIT BUTTON(S) ON PAGE ***');
+                        editButtons.forEach((btn, idx) => {
+                            result.push(`\\nEdit Button ${idx + 1}:`);
+                            result.push(`  Text: "${btn.text}"`);
+                            result.push(`  data-testid: "${btn.testid}"`);
+                            result.push(`  Visible: ${btn.visible}`);
+                            result.push(`  HTML: ${btn.html}`);
                         });
                     } else {
-                        result.push('✗ No <aside> element found');
+                        result.push('\\n✗ NO BUTTONS WITH "edit" TEXT FOUND ON ENTIRE PAGE');
                     }
                     
-                    // Check for sidebar by ID
-                    let sidebar = document.getElementById('sidebar');
-                    if (sidebar) {
-                        result.push('✓ Found #sidebar element');
-                    }
-                    
-                    // Try to find edit button by data-testid
+                    // 2. Check specific data-testid
                     let editBtn = document.querySelector('button[data-testid="item-edit-button"]');
                     if (editBtn) {
-                        result.push('✓ Found button with data-testid="item-edit-button"');
-                        result.push('  HTML: ' + editBtn.outerHTML.substring(0, 400));
+                        result.push('\\n✓ Found button with data-testid="item-edit-button"');
+                        result.push('  Text: ' + editBtn.textContent.trim().substring(0, 50));
                         result.push('  Visible: ' + (editBtn.offsetParent !== null));
-                        result.push('  Display: ' + window.getComputedStyle(editBtn).display);
+                        result.push('  HTML: ' + editBtn.outerHTML.substring(0, 400));
+                        
+                        // Find parent structure
+                        let parent = editBtn.parentElement;
+                        let parentInfo = [];
+                        for (let i = 0; i < 5 && parent; i++) {
+                            parentInfo.push(parent.tagName + (parent.id ? '#' + parent.id : '') + (parent.className ? '.' + parent.className.split(' ')[0] : ''));
+                            parent = parent.parentElement;
+                        }
+                        result.push('  Parent structure: ' + parentInfo.join(' > '));
                     } else {
-                        result.push('✗ No button with data-testid="item-edit-button" found');
+                        result.push('\\n✗ No button with data-testid="item-edit-button" found');
                     }
                     
-                    // Try exact XPath
-                    try {
-                        let xpathBtn = document.evaluate(
-                            '/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]',
-                            document,
-                            null,
-                            XPathResult.FIRST_ORDERED_NODE_TYPE,
-                            null
-                        ).singleNodeValue;
-                        if (xpathBtn) {
-                            result.push('✓ Found button via exact XPath');
-                            result.push('  HTML: ' + xpathBtn.outerHTML.substring(0, 400));
-                        } else {
-                            result.push('✗ Exact XPath did not find button');
-                        }
-                    } catch(e) {
-                        result.push('✗ XPath evaluation failed: ' + e.message);
+                    // 3. Check main content area (top of page)
+                    result.push('\\n=== CHECKING MAIN CONTENT AREA (TOP OF PAGE) ===');
+                    let main = document.querySelector('main');
+                    if (main) {
+                        let mainButtons = main.querySelectorAll('button');
+                        result.push('Buttons in <main>: ' + mainButtons.length);
+                        mainButtons.forEach((btn, idx) => {
+                            let text = btn.textContent.trim().toLowerCase();
+                            if (text.includes('edit')) {
+                                result.push(`  Main Button ${idx + 1}: "${btn.textContent.trim().substring(0, 50)}"`);
+                                result.push(`    HTML: ${btn.outerHTML.substring(0, 300)}`);
+                            }
+                        });
+                    }
+                    
+                    // 4. Check header area
+                    result.push('\\n=== CHECKING HEADER AREA ===');
+                    let header = document.querySelector('header, [role="banner"]');
+                    if (header) {
+                        let headerButtons = header.querySelectorAll('button');
+                        result.push('Buttons in header: ' + headerButtons.length);
                     }
                     
                     return result.join('\\n');
@@ -906,21 +917,21 @@ class VintedPriceBot:
             
             logger.info("=" * 60)
             
-            # Now try to find edit button on the item page
+            # Now try to find edit button on the item page (search entire page, not just sidebar)
             edit_button = None
             edit_selectors = [
-                # User-provided exact XPath (most reliable)
-                (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
-                # Data-testid selectors
+                # Data-testid selectors (search entire page)
                 (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
                 (By.XPATH, "//button[@data-testid='item-edit-button']"),
-                # Sidebar-specific selectors
-                (By.XPATH, "//aside//button[@data-testid='item-edit-button']"),
-                (By.CSS_SELECTOR, "#sidebar button[data-testid='item-edit-button']"),
-                # Text-based selectors
+                # Text-based selectors (search entire page)
                 (By.XPATH, "//span[contains(text(), 'Edit listing')]/ancestor::button"),
                 (By.XPATH, "//button[.//span[contains(text(), 'Edit listing')]]"),
-                (By.XPATH, "//aside//button[contains(., 'Edit')]"),
+                (By.XPATH, "//button[contains(., 'Edit listing')]"),
+                # User-provided exact XPath (if it's actually in aside)
+                (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
+                # Main content area
+                (By.XPATH, "//main//button[@data-testid='item-edit-button']"),
+                (By.XPATH, "//main//button[contains(., 'Edit')]"),
             ]
             
             # Try finding button with multiple wait strategies
@@ -959,41 +970,43 @@ class VintedPriceBot:
                         continue
                 
                 if not edit_button and attempt < 2:
-                    logger.info("Button not found, waiting 3 seconds and scrolling again...")
+                    logger.info("Button not found, waiting 3 seconds and scrolling to top again...")
                     time.sleep(3)
-                    # Scroll again
-                    self.driver.execute_script("window.scrollTo(0, 500);")
+                    # Scroll to top (edit button is at top of page)
+                    self.driver.execute_script("window.scrollTo(0, 0);")
                     time.sleep(2)
             
             if not edit_button:
-                # Last resort: JavaScript search with exact path
-                logger.info("Trying JavaScript to find edit button...")
+                # Last resort: JavaScript search (entire page)
+                logger.info("Trying JavaScript to find edit button (searching entire page)...")
                 try:
                     edit_button = self.driver.execute_script("""
-                        // Try exact XPath structure first
-                        let btn = document.evaluate(
-                            '/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]',
-                            document,
-                            null,
-                            XPathResult.FIRST_ORDERED_NODE_TYPE,
-                            null
-                        ).singleNodeValue;
+                        let btn = null;
                         
+                        // 1. Try data-testid (search entire page)
+                        btn = document.querySelector('button[data-testid="item-edit-button"]');
+                        
+                        // 2. If not found, search all buttons by text (entire page)
                         if (!btn) {
-                            // Try data-testid
-                            btn = document.querySelector('button[data-testid="item-edit-button"]');
+                            let allButtons = Array.from(document.querySelectorAll('button'));
+                            btn = allButtons.find(b => {
+                                let text = (b.textContent || b.innerText || '').trim().toLowerCase();
+                                return text.includes('edit listing') || 
+                                       (text.includes('edit') && text.length < 20);
+                            });
                         }
                         
+                        // 3. Try exact XPath (if it's actually in aside)
                         if (!btn) {
-                            // Find by text in sidebar
-                            let aside = document.querySelector('aside');
-                            if (aside) {
-                                let buttons = Array.from(aside.querySelectorAll('button'));
-                                btn = buttons.find(b => {
-                                    let text = b.textContent || b.innerText || '';
-                                    return text.toLowerCase().includes('edit listing');
-                                });
-                            }
+                            try {
+                                btn = document.evaluate(
+                                    '/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]',
+                                    document,
+                                    null,
+                                    XPathResult.FIRST_ORDERED_NODE_TYPE,
+                                    null
+                                ).singleNodeValue;
+                            } catch(e) {}
                         }
                         
                         if (btn) {
