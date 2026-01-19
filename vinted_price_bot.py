@@ -857,7 +857,7 @@ class VintedPriceBot:
                             result.push(`  HTML: ${btn.html}`);
                         });
                     } else {
-                        result.push('\\n✗ NO BUTTONS WITH "edit" TEXT FOUND ON ENTIRE PAGE');
+                        result.push('\\n✗ NO BUTTONS WITH "edit" OR "rediģēt" TEXT FOUND ON ENTIRE PAGE');
                     }
                     
                     // 2. Check specific data-testid
@@ -925,20 +925,22 @@ class VintedPriceBot:
                 # Data-testid selectors (most reliable - works in any language)
                 (By.CSS_SELECTOR, "button[data-testid='item-edit-button']"),
                 (By.XPATH, "//button[@data-testid='item-edit-button']"),
-                # Main content area with data-testid
-                (By.XPATH, "//main//button[@data-testid='item-edit-button']"),
-                # Text-based selectors - English
+                # Text-based selectors - Latvian (page is in Latvian)
+                (By.XPATH, "//span[contains(text(), 'Rediģēt aprakstu')]/ancestor::button"),
+                (By.XPATH, "//button[.//span[contains(text(), 'Rediģēt aprakstu')]]"),
+                (By.XPATH, "//button[contains(., 'Rediģēt aprakstu')]"),
+                (By.XPATH, "//span[contains(text(), 'Rediģēt')]/ancestor::button"),
+                (By.XPATH, "//button[contains(., 'Rediģēt')]"),
+                # Text-based selectors - English (fallback)
                 (By.XPATH, "//span[contains(text(), 'Edit listing')]/ancestor::button"),
                 (By.XPATH, "//button[.//span[contains(text(), 'Edit listing')]]"),
                 (By.XPATH, "//button[contains(., 'Edit listing')]"),
-                # Text-based selectors - Latvian
-                (By.XPATH, "//span[contains(text(), 'Rediģēt aprakstu')]/ancestor::button"),
-                (By.XPATH, "//button[.//span[contains(text(), 'Rediģēt aprakstu')]]"),
-                (By.XPATH, "//button[contains(., 'Rediģēt')]"),
-                # Generic edit text (any language)
-                (By.XPATH, "//button[.//span[contains(., 'Edit') or contains(., 'Rediģēt')]]"),
                 # User-provided exact XPath (if it's actually in aside)
                 (By.XPATH, "/html/body/div[2]/div/main/div/div/div/div[2]/div/div/main/div[1]/aside/div[2]/div[1]/div/div/div/div/div/div[2]/div[8]/div[1]/button[3]"),
+                # Main content area
+                (By.XPATH, "//main//button[@data-testid='item-edit-button']"),
+                (By.XPATH, "//main//button[contains(., 'Rediģēt')]"),
+                (By.XPATH, "//main//button[contains(., 'Edit')]"),
             ]
             
             # Try finding button with multiple wait strategies
@@ -990,19 +992,19 @@ class VintedPriceBot:
                     edit_button = self.driver.execute_script("""
                         let btn = null;
                         
-                        // 1. Try data-testid (search entire page) - most reliable, language-independent
+                        // 1. Try data-testid (search entire page)
                         btn = document.querySelector('button[data-testid="item-edit-button"]');
                         
-                        // 2. If not found, search all buttons by text (entire page) - check both English and Latvian
+                        // 2. If not found, search all buttons by text (entire page) - Latvian and English
                         if (!btn) {
                             let allButtons = Array.from(document.querySelectorAll('button'));
                             btn = allButtons.find(b => {
                                 let text = (b.textContent || b.innerText || '').trim().toLowerCase();
-                                // English: "edit listing"
-                                // Latvian: "rediģēt aprakstu"
-                                return text.includes('edit listing') || 
-                                       text.includes('rediģēt aprakstu') ||
-                                       text.includes('rediģēt') ||
+                                // Latvian: "rediģēt aprakstu" or "rediģēt"
+                                // English: "edit listing" or "edit"
+                                return text.includes('rediģēt aprakstu') ||
+                                       text.includes('edit listing') ||
+                                       (text.includes('rediģēt') && text.length < 25) ||
                                        (text.includes('edit') && text.length < 20);
                             });
                         }
