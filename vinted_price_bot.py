@@ -775,56 +775,9 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
-            # Navigate through profile page first to establish session context
-            # This is the user's workaround: go to profile page, then to edit
-            profile_url = f"https://www.vinted.lv/member/{self.profile_id}"
-            logger.info(f"Navigating to profile page first: {profile_url}")
-            self.driver.get(profile_url)
-            
-            # Wait for profile page to load
-            time.sleep(3)
-            
-            # Verify we're on profile page and logged in
-            current_url = self.driver.current_url
-            logger.info(f"Profile page URL: {current_url}")
-            
-            if any(x in current_url for x in ['/login', '/signup', '/signin']):
-                logger.error("⚠️ Redirected to login from profile page - session invalid!")
-                logger.error("Attempting to re-login...")
-                self.login_to_vinted()
-                # Try profile again
-                self.driver.get(profile_url)
-                time.sleep(3)
-                current_url = self.driver.current_url
-                if any(x in current_url for x in ['/login', '/signup', '/signin']):
-                    logger.error("Still can't access profile after re-login")
-                    return False
-            
-            logger.info("✓ Profile page accessed successfully")
-            
-            # Click on the item from profile page to establish proper navigation context
-            item_id = item['id']
-            logger.info(f"Looking for item {item_id} on profile page...")
-            try:
-                # Find the item link on profile page
-                item_link = self.driver.find_element(By.CSS_SELECTOR, f"a[href*='/items/{item_id}']")
-                logger.info(f"Found item link, clicking...")
-                item_link.click()
-                time.sleep(3)  # Wait for item page to load
-                
-                # Verify we're on the item page
-                current_url = self.driver.current_url
-                logger.info(f"Item page URL: {current_url}")
-                
-                if item_id not in current_url:
-                    logger.warning(f"Not on item page, manually navigating to {item_url}")
-                    self.driver.get(item_url)
-                    time.sleep(3)
-            except Exception as e:
-                logger.warning(f"Could not click item from profile: {e}")
-                logger.info(f"Manually navigating to item page: {item_url}")
-                self.driver.get(item_url)
-                time.sleep(3)
+            # Navigate directly to item page
+            logger.info(f"Navigating to item page: {item_url}")
+            self.driver.get(item_url)
             
             # Verify cookies are still present
             try:
