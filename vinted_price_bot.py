@@ -754,40 +754,46 @@ class VintedPriceBot:
             
             logger.info(f"Using URL from sheet: {item_url}")
             
-            # Try going directly to the edit page (skip finding button)
+            # Verify we're still logged in by checking profile link
+            try:
+                self.driver.get("https://www.vinted.lv")
+                time.sleep(2)
+                # Look for user menu/profile indicator
+                user_menu = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/member/']")
+                if not user_menu:
+                    logger.warning("⚠️ Not logged in! Attempting to re-login...")
+                    self.login_to_vinted()
+                else:
+                    logger.info("✓ Login session active")
+            except Exception as e:
+                logger.warning(f"Could not verify login status: {e}")
+            
+            # Navigate directly to edit page (skip finding button)
             edit_url = item_url.rstrip('/') + '/edit'
             logger.info(f"Navigating directly to edit page: {edit_url}")
             self.driver.get(edit_url)
             
-            # Wait for page to be ready
+            # Wait for edit page to load
             WebDriverWait(self.driver, 15).until(
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
             time.sleep(3)  # Additional wait for dynamic content
             
-            # Check if we're on the edit page or got redirected
+            # Check if we're on the edit page
             current_url = self.driver.current_url
             logger.info(f"Current URL: {current_url}")
             
             if '/edit' not in current_url:
-                # We got redirected - probably not logged in or not our item
+                # We got redirected - check if it's login page
                 if any(x in current_url for x in ['/login', '/signup', '/signin']):
-                    logger.error("⚠️ Redirected to login page - session expired!")
-                    logger.error("Attempting to re-login...")
-                    self.login_to_vinted()
-                    # Try edit page again
-                    self.driver.get(edit_url)
-                    time.sleep(3)
-                    current_url = self.driver.current_url
-                    if '/edit' not in current_url:
-                        logger.error("Still can't access edit page after re-login")
-                        return False
+                    logger.error("⚠️ Redirected to login page - session expired or invalid!")
+                    return False
                 else:
-                    logger.error(f"⚠️ Cannot access edit page - redirected to: {current_url}")
+                    logger.error(f"⚠️ Could not access edit page - redirected to: {current_url}")
                     logger.error("This item may not belong to the logged-in account!")
                     return False
             
-            logger.info("✓ On edit page successfully")
+            logger.info("✓ Successfully accessed edit page")
             
             # Find price input - using exact ID and data-testid
             logger.info("Looking for price input...")
