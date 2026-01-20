@@ -751,10 +751,22 @@ class VintedPriceBot:
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ]
             
-            # If item exists in sheet, update that row; otherwise, append new row
+            # If item exists in sheet, check if data changed before updating
             if item_id in existing_row_map:
-                rows_to_update[existing_row_map[item_id]] = row_data
+                # Only update if data actually changed
+                old_data = existing_dict[item_id]
+                old_price = float(old_data.get('Current Price', 0) or 0)
+                old_new_price = float(old_data.get('New Price', 0) or 0)
+                
+                # Check if price changed or if it's a significant update
+                price_changed = abs(old_price - current_price) > 0.01 or abs(old_new_price - new_price) > 0.01
+                
+                if price_changed:
+                    # Data changed - add to update list
+                    rows_to_update[existing_row_map[item_id]] = row_data
+                # else: skip update - no changes needed
             else:
+                # New item - always append
                 new_rows_to_append.append(row_data)
         
         # Process removed items - update their status to sold/removed
@@ -775,14 +787,44 @@ class VintedPriceBot:
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     ]
         
-        # Update existing rows in batches
+        # Update existing rows in batches to avoid rate limits (60 writes/min = 1 per second)
         if rows_to_update:
-            logger.info(f"Updating {len(rows_to_update)} existing rows...")
-            # Group updates by ranges for efficiency
+            logger.info(f"Updating {len(rows_to_update)} rows that changed (out of {len(existing_row_map)} total)...")
             sorted_rows = sorted(rows_to_update.items())
-            for row_num, row_data in sorted_rows:
-                range_name = f'A{row_num}:I{row_num}'
-                self.sheet.update(values=[row_data], range_name=range_name)
+            
+            # Group consecutive rows together for batch updates
+            groups = []
+            if sorted_rows:
+                current_group = [sorted_rows[0]]
+                for i in range(1, len(sorted_rows)):
+                    if sorted_rows[i][0] == sorted_rows[i-1][0] + 1:
+                        # Consecutive row - add to current group
+                        current_group.append(sorted_rows[i])
+                    else:
+                        # Gap found - start new group
+                        groups.append(current_group)
+                        current_group = [sorted_rows[i]]
+                groups.append(current_group)
+            
+            # Update each group (consecutive rows can be updated in one API call)
+            for group_idx, group in enumerate(groups):
+                if len(group) == 1:
+                    # Single row
+                    row_num, row_data = group[0]
+                    range_name = f'A{row_num}:I{row_num}'
+                    self.sheet.update(values=[row_data], range_name=range_name)
+                else:
+                    # Multiple consecutive rows - update in one call
+                    min_row = group[0][0]
+                    max_row = group[-1][0]
+                    range_name = f'A{min_row}:I{max_row}'
+                    row_dict = {row_num: row_data for row_num, row_data in group}
+                    batch_values = [row_dict[r] for r in range(min_row, max_row + 1)]
+                    self.sheet.update(values=batch_values, range_name=range_name)
+                
+                # Add delay between groups to stay under rate limit (1 request per second)
+                if group_idx < len(groups) - 1:
+                    time.sleep(1.1)  # Wait 1.1 seconds between groups
         
         # Append new rows
         if new_rows_to_append:
