@@ -755,14 +755,46 @@ class VintedPriceBot:
             if item_id in existing_row_map:
                 # Only update if data actually changed
                 old_data = existing_dict[item_id]
-                old_price = float(old_data.get('Current Price', 0) or 0)
-                old_new_price = float(old_data.get('New Price', 0) or 0)
                 
-                # Check if price changed or if it's a significant update
-                price_changed = abs(old_price - current_price) > 0.01 or abs(old_new_price - new_price) > 0.01
+                # Safely convert prices to float (handle strings, empty values, etc.)
+                try:
+                    old_price = float(str(old_data.get('Current Price', 0) or 0).replace(',', '.'))
+                except:
+                    old_price = 0.0
                 
-                if price_changed:
+                try:
+                    old_new_price = float(str(old_data.get('New Price', 0) or 0).replace(',', '.'))
+                except:
+                    old_new_price = 0.0
+                
+                old_status = str(old_data.get('Status', '')).strip()
+                
+                # Check if anything meaningful changed (ignore timestamp)
+                # Only update if the CURRENT PRICE changed (not just recalculated new_price)
+                # Use tolerance to account for rounding differences
+                price_changed = abs(old_price - current_price) > 0.05  # 5 cent tolerance
+                status_changed = old_status != status
+                
+                # Also check if title or URL changed (shouldn't happen, but just in case)
+                old_title = str(old_data.get('Title', '')).strip()
+                old_url = str(old_data.get('URL', '')).strip()
+                title_changed = old_title != item['title']
+                url_changed = old_url != item.get('url', '')
+                
+                # Only update if CURRENT PRICE or STATUS changed (not just recalculated new_price)
+                # This prevents unnecessary updates when only order changes
+                if price_changed or status_changed or title_changed or url_changed:
                     # Data changed - add to update list
+                    changes = []
+                    if price_changed:
+                        changes.append(f"current_price: {old_price}→{current_price}")
+                    if status_changed:
+                        changes.append(f"status: {old_status}→{status}")
+                    if title_changed:
+                        changes.append(f"title changed")
+                    if url_changed:
+                        changes.append(f"url changed")
+                    logger.debug(f"Item {item_id} changed: {', '.join(changes)}")
                     rows_to_update[existing_row_map[item_id]] = row_data
                 # else: skip update - no changes needed
             else:
