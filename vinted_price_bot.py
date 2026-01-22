@@ -7,6 +7,8 @@ import os
 import time
 import logging
 import argparse
+import html as html_lib
+import webbrowser
 from datetime import datetime
 from typing import List, Dict, Optional, Sequence
 from dotenv import load_dotenv
@@ -115,6 +117,126 @@ class VintedPriceBot:
         if self.limit is not None:
             return candidates[: max(0, int(self.limit))]
         return candidates
+
+    @staticmethod
+    def _item_edit_url(item_url: str) -> str:
+        url = (item_url or "").strip()
+        if not url:
+            return ""
+        return url.rstrip("/") + "/edit"
+
+    def export_manual_worklist(
+        self,
+        items_to_update: List[Dict],
+        *,
+        output_html_path: str,
+        max_rows: Optional[int] = None,
+    ) -> str:
+        """
+        Create an HTML worklist for manual price edits.
+        Includes item link, edit link, current price, new price, and % change.
+        """
+        rows = items_to_update if max_rows is None else items_to_update[: max(0, int(max_rows))]
+
+        def esc(s: str) -> str:
+            return html_lib.escape(str(s))
+
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        table_rows = []
+        for idx, item in enumerate(rows, start=1):
+            item_url = str(item.get("url", "") or "")
+            edit_url = self._item_edit_url(item_url)
+            title = str(item.get("title", "Unknown") or "Unknown")
+            item_id = str(item.get("id", "") or "")
+            current_price = float(item.get("price", 0) or 0)
+            new_price = float(item.get("new_price", 0) or 0)
+            pct = float(item.get("price_change_percent", 0) or 0)
+
+            table_rows.append(
+                "<tr>"
+                f"<td>{idx}</td>"
+                f"<td>{esc(item_id)}</td>"
+                f"<td>{esc(title)}</td>"
+                f"<td>€{current_price:.2f}</td>"
+                f"<td><strong>€{new_price:.2f}</strong></td>"
+                f"<td>{pct:.1f}%</td>"
+                f"<td><a href='{esc(item_url)}' target='_blank' rel='noreferrer'>View</a></td>"
+                f"<td><a href='{esc(edit_url)}' target='_blank' rel='noreferrer'>Edit</a></td>"
+                "</tr>"
+            )
+
+        html_doc = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vinted manual price update worklist</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }}
+    .meta {{ color: #555; margin-bottom: 12px; }}
+    .controls {{ display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 18px; }}
+    button {{ padding: 10px 12px; cursor: pointer; }}
+    input {{ padding: 10px 12px; width: 90px; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
+    th {{ background: #f7f7f7; text-align: left; position: sticky; top: 0; }}
+    tr:nth-child(even) {{ background: #fcfcfc; }}
+    .note {{ background: #fff7d6; border: 1px solid #f0e0a0; padding: 12px; border-radius: 8px; }}
+  </style>
+</head>
+<body>
+  <h2>Vinted manual price update worklist</h2>
+  <div class="meta">Generated: {esc(generated_at)} • Items: {len(items_to_update)} (showing {len(rows)})</div>
+  <div class="note">
+    Open the <strong>Edit</strong> links, change the price to the <strong>New Price</strong>, and save.
+    You must already be logged in to Vinted in your browser.
+  </div>
+
+  <div class="controls">
+    <label>Batch size <input id="batchSize" type="number" min="1" max="50" value="10" /></label>
+    <button onclick="openBatch()">Open next batch of Edit links</button>
+    <button onclick="resetCursor()">Reset batch cursor</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Item ID</th><th>Title</th><th>Current</th><th>New</th><th>%</th><th>View</th><th>Edit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {"".join(table_rows)}
+    </tbody>
+  </table>
+
+  <script>
+    let cursor = 0;
+    function editLinks() {{
+      return Array.from(document.querySelectorAll("a")).filter(a => a.textContent === "Edit");
+    }}
+    function openBatch() {{
+      const n = Math.max(1, Math.min(50, parseInt(document.getElementById("batchSize").value || "10", 10)));
+      const links = editLinks();
+      const slice = links.slice(cursor, cursor + n);
+      if (slice.length === 0) {{
+        alert("No more links in this worklist.");
+        return;
+      }}
+      slice.forEach(a => window.open(a.href, "_blank", "noreferrer"));
+      cursor += slice.length;
+    }}
+    function resetCursor() {{
+      cursor = 0;
+      alert("Cursor reset. Next click opens from the top again.");
+    }}
+  </script>
+</body>
+</html>
+"""
+
+        with open(output_html_path, "w", encoding="utf-8") as f:
+            f.write(html_doc)
+        return output_html_path
         
     def setup_driver(self):
         """Initialize Chrome WebDriver with headless options"""
@@ -1193,6 +1315,22 @@ if __name__ == "__main__":
         help="Actually update prices on Vinted. Default is dry-run (no Vinted edits).",
     )
     parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Manual mode: generate an HTML worklist and exit (no Vinted edits).",
+    )
+    parser.add_argument(
+        "--export-html",
+        type=str,
+        default="manual_price_updates.html",
+        help="Where to write the manual HTML worklist (used with --manual).",
+    )
+    parser.add_argument(
+        "--open-html",
+        action="store_true",
+        help="Open the generated HTML worklist in your default browser (used with --manual).",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -1243,5 +1381,23 @@ if __name__ == "__main__":
         delay_seconds=args.delay_seconds,
         max_failures=args.max_failures,
     )
+    # Manual mode overrides apply/dry-run behavior: create worklist and exit
+    if args.manual:
+        bot.setup_driver()
+        bot.setup_google_sheets()
+        items = bot.get_listed_items()
+        items, _existing = bot.sync_with_google_sheets(items)
+        items_to_update = bot._select_items_to_update(items)
+        out_path = bot.export_manual_worklist(items_to_update, output_html_path=args.export_html)
+        logger.info(f"Manual worklist written to: {out_path}")
+        if args.open_html:
+            try:
+                webbrowser.open_new_tab(f"file://{os.path.abspath(out_path)}")
+            except Exception as e:
+                logger.warning(f"Could not open browser automatically: {e}")
+        if bot.driver:
+            bot.driver.quit()
+        raise SystemExit(0)
+
     bot.run()
 

@@ -178,6 +178,9 @@ Then run the bot. By default it’s a **dry-run**; add `--apply` when you’re r
 # Preview what would change (no Vinted edits)
 python vinted_price_bot.py
 
+# Manual workflow: generate a clickable worklist (recommended if Vinted blocks automation)
+python vinted_price_bot.py --manual --export-html manual_price_updates.html --open-html
+
 # Apply changes to the first 25 matching items
 python vinted_price_bot.py --apply --limit 25
 
@@ -187,6 +190,21 @@ python vinted_price_bot.py --apply --only-ids 123456789,987654321
 # Only apply to items whose title contains a keyword
 python vinted_price_bot.py --apply --title-contains "nike"
 ```
+
+### Recommended if you get blocked: manual update worklist
+
+If Vinted blocks automated edits, use the bot only to:
+- scrape + sync your items to Google Sheets
+- compute new prices
+- generate an HTML page with **Edit** links + the **New Price** you should type
+
+Run:
+
+```bash
+python vinted_price_bot.py --manual --export-html manual_price_updates.html --open-html
+```
+
+In the generated page, use **“Open next batch of Edit links”** to open tabs in small batches (e.g. 10).
 
 ⚠️ Note: automating Vinted may violate their Terms and can trigger captchas/blocks. Use conservative limits and delays.
 
