@@ -6,8 +6,11 @@ Automatically updates Vinted item prices based on Google Sheets configuration
 import os
 import time
 import logging
+import argparse
+import html as html_lib
+import webbrowser
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Sequence
 from dotenv import load_dotenv
 
 from selenium import webdriver
@@ -38,7 +41,17 @@ logger = logging.getLogger(__name__)
 class VintedPriceBot:
     """Bot to manage Vinted item prices via Google Sheets"""
     
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        apply_updates: bool = False,
+        limit: Optional[int] = None,
+        only_ids: Optional[Sequence[str]] = None,
+        title_contains: Optional[str] = None,
+        min_change_eur: float = 0.01,
+        delay_seconds: float = 8.0,
+        max_failures: int = 5,
+    ):
         """Initialize the bot with environment variables"""
         load_dotenv()
         
@@ -48,6 +61,15 @@ class VintedPriceBot:
         self.google_sheet_id = os.getenv('GOOGLE_SHEET_ID')
         self.google_creds_path = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON', './service_account.json')
         self.default_percent = float(os.getenv('DEFAULT_PRICE_CHANGE_PERCENT', '-2'))  # Negative to LOWER prices
+
+        # Runtime options (CLI-controlled)
+        self.apply_updates = apply_updates
+        self.limit = limit
+        self.only_ids = set(str(x).strip() for x in (only_ids or []) if str(x).strip())
+        self.title_contains = title_contains.strip().lower() if title_contains else None
+        self.min_change_eur = float(min_change_eur)
+        self.delay_seconds = float(delay_seconds)
+        self.max_failures = int(max_failures)
         
         # Extract profile ID from URL (e.g., "https://www.vinted.lv/member/295252411" -> "295252411")
         if self.vinted_profile_url:
@@ -57,6 +79,164 @@ class VintedPriceBot:
         
         self.driver = None
         self.sheet = None
+
+    def _select_items_to_update(self, items: List[Dict]) -> List[Dict]:
+        """
+        Filter items down to those we should attempt to update on Vinted.
+
+        Rules:
+        - Must have a meaningful price change (>= min_change_eur).
+        - Skip newly discovered items (first run after discovery).
+        - Optionally filter by IDs and/or title substring.
+        - Apply optional limit.
+        """
+        candidates: List[Dict] = []
+        for item in items:
+            if item.get('is_new_discovery', False):
+                continue
+
+            try:
+                current = float(item.get('price', 0) or 0)
+                new = float(item.get('new_price', current) or current)
+            except Exception:
+                continue
+
+            if abs(new - current) < self.min_change_eur:
+                continue
+
+            if self.only_ids and str(item.get('id', '')).strip() not in self.only_ids:
+                continue
+
+            if self.title_contains:
+                title = str(item.get('title', '')).lower()
+                if self.title_contains not in title:
+                    continue
+
+            candidates.append(item)
+
+        if self.limit is not None:
+            return candidates[: max(0, int(self.limit))]
+        return candidates
+
+    @staticmethod
+    def _item_edit_url(item_url: str) -> str:
+        url = (item_url or "").strip()
+        if not url:
+            return ""
+        return url.rstrip("/") + "/edit"
+
+    def export_manual_worklist(
+        self,
+        items_to_update: List[Dict],
+        *,
+        output_html_path: str,
+        max_rows: Optional[int] = None,
+    ) -> str:
+        """
+        Create an HTML worklist for manual price edits.
+        Includes item link, edit link, current price, new price, and % change.
+        """
+        rows = items_to_update if max_rows is None else items_to_update[: max(0, int(max_rows))]
+
+        def esc(s: str) -> str:
+            return html_lib.escape(str(s))
+
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        table_rows = []
+        for idx, item in enumerate(rows, start=1):
+            item_url = str(item.get("url", "") or "")
+            edit_url = self._item_edit_url(item_url)
+            title = str(item.get("title", "Unknown") or "Unknown")
+            item_id = str(item.get("id", "") or "")
+            current_price = float(item.get("price", 0) or 0)
+            new_price = float(item.get("new_price", 0) or 0)
+            pct = float(item.get("price_change_percent", 0) or 0)
+
+            table_rows.append(
+                "<tr>"
+                f"<td>{idx}</td>"
+                f"<td>{esc(item_id)}</td>"
+                f"<td>{esc(title)}</td>"
+                f"<td>€{current_price:.2f}</td>"
+                f"<td><strong>€{new_price:.2f}</strong></td>"
+                f"<td>{pct:.1f}%</td>"
+                f"<td><a href='{esc(item_url)}' target='_blank' rel='noreferrer'>View</a></td>"
+                f"<td><a href='{esc(edit_url)}' target='_blank' rel='noreferrer'>Edit</a></td>"
+                "</tr>"
+            )
+
+        html_doc = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vinted manual price update worklist</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }}
+    .meta {{ color: #555; margin-bottom: 12px; }}
+    .controls {{ display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 18px; }}
+    button {{ padding: 10px 12px; cursor: pointer; }}
+    input {{ padding: 10px 12px; width: 90px; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
+    th {{ background: #f7f7f7; text-align: left; position: sticky; top: 0; }}
+    tr:nth-child(even) {{ background: #fcfcfc; }}
+    .note {{ background: #fff7d6; border: 1px solid #f0e0a0; padding: 12px; border-radius: 8px; }}
+  </style>
+</head>
+<body>
+  <h2>Vinted manual price update worklist</h2>
+  <div class="meta">Generated: {esc(generated_at)} • Items: {len(items_to_update)} (showing {len(rows)})</div>
+  <div class="note">
+    Open the <strong>Edit</strong> links, change the price to the <strong>New Price</strong>, and save.
+    You must already be logged in to Vinted in your browser.
+  </div>
+
+  <div class="controls">
+    <label>Batch size <input id="batchSize" type="number" min="1" max="50" value="10" /></label>
+    <button onclick="openBatch()">Open next batch of Edit links</button>
+    <button onclick="resetCursor()">Reset batch cursor</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Item ID</th><th>Title</th><th>Current</th><th>New</th><th>%</th><th>View</th><th>Edit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {"".join(table_rows)}
+    </tbody>
+  </table>
+
+  <script>
+    let cursor = 0;
+    function editLinks() {{
+      return Array.from(document.querySelectorAll("a")).filter(a => a.textContent === "Edit");
+    }}
+    function openBatch() {{
+      const n = Math.max(1, Math.min(50, parseInt(document.getElementById("batchSize").value || "10", 10)));
+      const links = editLinks();
+      const slice = links.slice(cursor, cursor + n);
+      if (slice.length === 0) {{
+        alert("No more links in this worklist.");
+        return;
+      }}
+      slice.forEach(a => window.open(a.href, "_blank", "noreferrer"));
+      cursor += slice.length;
+    }}
+    function resetCursor() {{
+      cursor = 0;
+      alert("Cursor reset. Next click opens from the top again.");
+    }}
+  </script>
+</body>
+</html>
+"""
+
+        with open(output_html_path, "w", encoding="utf-8") as f:
+            f.write(html_doc)
+        return output_html_path
         
     def setup_driver(self):
         """Initialize Chrome WebDriver with headless options"""
@@ -1044,54 +1224,79 @@ class VintedPriceBot:
             
             # Sync with Google Sheets
             items, existing_dict = self.sync_with_google_sheets(items)
-            
+
+            # Decide what would be updated
+            items_to_update = self._select_items_to_update(items)
+            logger.info("=" * 60)
+            logger.info(f"Price update candidates: {len(items_to_update)} item(s)")
+            if self.only_ids:
+                logger.info(f"Filtered by IDs: {len(self.only_ids)}")
+            if self.title_contains:
+                logger.info(f"Filtered by title substring: {self.title_contains!r}")
+            if self.limit is not None:
+                logger.info(f"Limit applied: {self.limit}")
+            logger.info(f"Min change (EUR): {self.min_change_eur}")
+            logger.info(f"Mode: {'APPLY' if self.apply_updates else 'DRY-RUN'}")
+            logger.info("=" * 60)
+
+            if not items_to_update:
+                logger.info("No items need price updates")
+                return
+
+            # In dry-run, only print the plan and exit (still syncs sheet)
+            if not self.apply_updates:
+                for item in items_to_update[: min(20, len(items_to_update))]:
+                    percent_value = float(item.get('price_change_percent', 0) or 0)
+                    logger.info(
+                        f"[DRY-RUN] {item.get('title', 'Unknown')} (ID {item.get('id')}) "
+                        f"€{float(item.get('price', 0) or 0):.2f} → €{float(item.get('new_price', 0) or 0):.2f} "
+                        f"({percent_value:.1f}%)"
+                    )
+                if len(items_to_update) > 20:
+                    logger.info(f"[DRY-RUN] ... and {len(items_to_update) - 20} more")
+                logger.info("Dry-run complete. Re-run with --apply to actually update Vinted.")
+                return
+
             # Now login for price updates
             logger.info("\n" + "=" * 60)
             logger.info("Logging in to update prices...")
             logger.info("=" * 60)
             try:
                 self.login_to_vinted()
-                can_update = True
             except Exception as e:
                 logger.error(f"Login failed: {e}")
                 logger.warning("⚠️  Items saved to Google Sheet, but price updates skipped")
-                can_update = False
-            
-            # Update prices (TESTING MODE: Only last item)
-            if can_update:
-                logger.info("⚠️  TESTING MODE: Only updating last item with price change")
-                success_count = 0
-                
-                # Find items that need price changes (exclude new discoveries and items with no change)
-                items_to_update = [
-                    item for item in items 
-                    if item['new_price'] != item['price'] 
-                    and not item.get('is_new_discovery', False)  # Skip newly discovered items
-                ]
-                
-                if not items_to_update:
-                    logger.info("No items need price updates")
+                return
+
+            # Bulk update prices
+            success_count = 0
+            failure_count = 0
+            for idx, item in enumerate(items_to_update, start=1):
+                logger.info("-" * 60)
+                logger.info(f"Updating item {idx}/{len(items_to_update)}")
+                logger.info(f"Title: {item.get('title', 'Unknown')}")
+                logger.info(f"ID: {item.get('id')}")
+                logger.info(f"Current: €{float(item.get('price', 0) or 0):.2f}")
+                logger.info(f"New: €{float(item.get('new_price', 0) or 0):.2f}")
+
+                ok = self.update_item_price(item, existing_dict)
+                if ok:
+                    success_count += 1
                 else:
-                    # Get the LAST item that needs updating
-                    last_item = items_to_update[-1]
-                    
-                    logger.info(f"🧪 Testing price update on LAST item: {last_item['title']}")
-                    logger.info(f"   Current price: €{last_item['price']:.2f}")
-                    logger.info(f"   New price: €{last_item['new_price']:.2f}")
-                    percent_value = float(last_item.get('price_change_percent', 0))
-                    logger.info(f"   Change: {percent_value:.1f}%")
-                    
-                    if self.update_item_price(last_item, existing_dict):
-                        success_count += 1
-                
-                logger.info("=" * 60)
-                logger.info(f"Bot completed! Updated {success_count}/{len(items_to_update) if items_to_update else 0} items (test mode)")
-                logger.info(f"⚠️  TEST MODE: {len(items) - len(items_to_update)} items skipped")
-                logger.info("=" * 60)
-            else:
-                logger.info("=" * 60)
-                logger.info("Bot completed! Items synced to Google Sheet (no price updates)")
-                logger.info("=" * 60)
+                    failure_count += 1
+                    if failure_count >= self.max_failures:
+                        logger.error(f"Too many failures ({failure_count}). Stopping early.")
+                        break
+
+                # Basic pacing to reduce rate-limiting / anti-bot flags
+                if idx < len(items_to_update):
+                    time.sleep(max(0.0, self.delay_seconds))
+
+            logger.info("=" * 60)
+            logger.info(f"Bot completed! Updated {success_count}/{len(items_to_update)} item(s)")
+            if failure_count:
+                logger.info(f"Failures: {failure_count}")
+            logger.info("=" * 60)
                 
         except Exception as e:
             logger.error(f"Bot execution failed: {e}")
@@ -1103,6 +1308,96 @@ class VintedPriceBot:
                 logger.info("WebDriver closed")
 
 if __name__ == "__main__":
-    bot = VintedPriceBot()
+    parser = argparse.ArgumentParser(description="Bulk update Vinted prices from Google Sheets rules.")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually update prices on Vinted. Default is dry-run (no Vinted edits).",
+    )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Manual mode: generate an HTML worklist and exit (no Vinted edits).",
+    )
+    parser.add_argument(
+        "--export-html",
+        type=str,
+        default="manual_price_updates.html",
+        help="Where to write the manual HTML worklist (used with --manual).",
+    )
+    parser.add_argument(
+        "--open-html",
+        action="store_true",
+        help="Open the generated HTML worklist in your default browser (used with --manual).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum number of items to update in this run (after filtering).",
+    )
+    parser.add_argument(
+        "--only-ids",
+        type=str,
+        default=None,
+        help="Comma-separated item IDs to update (e.g. 123,456).",
+    )
+    parser.add_argument(
+        "--title-contains",
+        type=str,
+        default=None,
+        help="Only update items whose title contains this substring (case-insensitive).",
+    )
+    parser.add_argument(
+        "--min-change-eur",
+        type=float,
+        default=0.01,
+        help="Skip items where |new-current| is below this EUR value.",
+    )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=8.0,
+        help="Delay between Vinted updates to reduce rate limiting.",
+    )
+    parser.add_argument(
+        "--max-failures",
+        type=int,
+        default=5,
+        help="Stop after this many update failures in one run.",
+    )
+    args = parser.parse_args()
+
+    only_ids = None
+    if args.only_ids:
+        only_ids = [x.strip() for x in args.only_ids.split(",") if x.strip()]
+
+    bot = VintedPriceBot(
+        apply_updates=bool(args.apply),
+        limit=args.limit,
+        only_ids=only_ids,
+        title_contains=args.title_contains,
+        min_change_eur=args.min_change_eur,
+        delay_seconds=args.delay_seconds,
+        max_failures=args.max_failures,
+    )
+    # Manual mode overrides apply/dry-run behavior: create worklist and exit
+    if args.manual:
+        bot.setup_driver()
+        bot.setup_google_sheets()
+        items = bot.get_listed_items()
+        items, _existing = bot.sync_with_google_sheets(items)
+        items_to_update = bot._select_items_to_update(items)
+        out_path = bot.export_manual_worklist(items_to_update, output_html_path=args.export_html)
+        logger.info(f"Manual worklist written to: {out_path}")
+        if args.open_html:
+            try:
+                webbrowser.open_new_tab(f"file://{os.path.abspath(out_path)}")
+            except Exception as e:
+                logger.warning(f"Could not open browser automatically: {e}")
+        if bot.driver:
+            bot.driver.quit()
+        raise SystemExit(0)
+
     bot.run()
 

@@ -7,6 +7,7 @@ Automatically update your Vinted item prices based on percentage changes defined
 - 🔄 Automatically scrapes your Vinted listed items
 - 📊 Syncs item data with Google Sheets
 - 💰 Updates prices based on customizable percentages
+- ✅ Bulk price updates (dry-run by default, `--apply` to execute)
 - 🆕 Detects new items automatically (adds them to sheet)
 - 🗑️ Detects sold/removed items (marks them as removed)
 - ⏰ Runs weekly via GitHub Actions
@@ -151,8 +152,61 @@ This will:
 
 8. **Run price updates** (optional - test locally first):
 ```bash
-python vinted_price_bot.py
+python vinted_price_bot.py            # dry-run (no Vinted edits)
+python vinted_price_bot.py --apply    # actually updates prices on Vinted
 ```
+
+### Bulk editing (how to do it in practice)
+
+Vinted doesn’t reliably expose a “bulk edit prices” button for regular sellers, so brands typically do this with **automation**:
+- pull all active listings,
+- compute a new price per listing (usually with a % rule + rounding/floor),
+- then update each listing programmatically (with pacing and safety limits).
+
+This repo follows that same pattern, but uses Google Sheets as the control panel.
+
+#### The fast way: change many items at once in Google Sheets
+
+- Select the entire **“Price Change %”** column range and mass-fill it (type a value once, then drag the fill handle down).
+- Or use formulas (example): set all active rows to `-10` to reduce by 10%.
+
+Then run the bot. By default it’s a **dry-run**; add `--apply` when you’re ready.
+
+#### Useful run options
+
+```bash
+# Preview what would change (no Vinted edits)
+python vinted_price_bot.py
+
+# Manual workflow: generate a clickable worklist (recommended if Vinted blocks automation)
+python vinted_price_bot.py --manual --export-html manual_price_updates.html --open-html
+
+# Apply changes to the first 25 matching items
+python vinted_price_bot.py --apply --limit 25
+
+# Only apply to specific item IDs
+python vinted_price_bot.py --apply --only-ids 123456789,987654321
+
+# Only apply to items whose title contains a keyword
+python vinted_price_bot.py --apply --title-contains "nike"
+```
+
+### Recommended if you get blocked: manual update worklist
+
+If Vinted blocks automated edits, use the bot only to:
+- scrape + sync your items to Google Sheets
+- compute new prices
+- generate an HTML page with **Edit** links + the **New Price** you should type
+
+Run:
+
+```bash
+python vinted_price_bot.py --manual --export-html manual_price_updates.html --open-html
+```
+
+In the generated page, use **“Open next batch of Edit links”** to open tabs in small batches (e.g. 10).
+
+⚠️ Note: automating Vinted may violate their Terms and can trigger captchas/blocks. Use conservative limits and delays.
 
 ## Configuration
 
